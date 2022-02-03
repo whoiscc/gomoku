@@ -2,8 +2,8 @@ use crate::{Address, GeneralInterface, Handle};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-pub trait IterateReference {
-    fn iterate_reference(&self, callback: &mut dyn FnMut(Address));
+pub trait EnumerateReference {
+    fn enumerate_reference(&self, callback: &mut dyn FnMut(Address));
 }
 
 #[derive(Debug)]
@@ -44,7 +44,7 @@ impl Collector {
         while let Some(address) = gray_stack.pop() {
             let handle = self.storage.get(&address).unwrap();
             storage.insert(address, handle.clone());
-            handle.iterate_reference(&mut |address| {
+            handle.enumerate_reference(&mut |address| {
                 if !storage.contains_key(&address) {
                     gray_stack.push(address);
                 }
@@ -66,8 +66,8 @@ mod tests {
 
     #[derive(Debug)]
     struct GeneralNode(u64, Vec<Address>);
-    impl IterateReference for GeneralNode {
-        fn iterate_reference(&self, callback: &mut dyn FnMut(Address)) {
+    impl EnumerateReference for GeneralNode {
+        fn enumerate_reference(&self, callback: &mut dyn FnMut(Address)) {
             for address in &self.1 {
                 callback(*address);
             }

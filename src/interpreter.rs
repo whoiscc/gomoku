@@ -1,20 +1,21 @@
 use crate::collector::Collector;
-use crate::objects::{False, True};
+use crate::objects::{Dispatch, False, List, True};
 use crate::{Address, GeneralInterface, Handle};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub enum ByteCode {
     AllocateLiteral(Box<dyn Fn() -> Box<dyn GeneralInterface>>),
     Copy(u8),
     Operate(u8, Box<dyn Fn(&mut dyn OperateContext)>),
-    Jump(i8),                     // jump if stack top is true, by instruction offset
-    Call((ModuleId, String), u8), // number of arguments
-    Return(u8),                   // number of returned variables
-    AssertFloating(u8),           // assert number of floating variables
-    PackFloating(u8),             // pack remaining variables into one single variable
+    Jump(i8), // jump if stack top is true, by instruction offset
+    Call(u8), // push calling frame according to Dispatch on stack top
+    Return(u8),
+    AssertFloating(u8), // assert number of floating variables
+    PackFloating(u8),   // pack remaining variables into one single variable
 }
 
-type ModuleId = String;
+pub type ModuleId = String;
 
 pub trait OperateContext {
     fn inspect(&self, address: Address) -> &dyn GeneralInterface;
@@ -145,8 +146,16 @@ impl Interpreter {
                     panic!("jump on non-boolean variable {:?}", top);
                 }
             }
-            ByteCode::Call((module_id, symbol), n_argument) => {
-                let (module_id, symbol) = (module_id.clone(), symbol.clone());
+            ByteCode::Call(n_argument) => {
+                let dispatch = *self.variable_stack.last().unwrap();
+                let dispatch: &Dispatch = self
+                    .collector
+                    .inspect(dispatch)
+                    .as_ref()
+                    .downcast_ref()
+                    .unwrap();
+                let (module_id, symbol) = (dispatch.module_id.clone(), dispatch.symbol.clone());
+                self.variable_stack.remove(self.variable_stack.len() - 1); // is it useful to save it?
                 let stack_size = self.variable_stack.len() - *n_argument as usize;
                 self.call_stack.last_mut().unwrap().stack_size = stack_size;
                 self.push_call(&module_id, &symbol);
@@ -170,7 +179,14 @@ impl Interpreter {
                 );
             }
             ByteCode::PackFloating(n_destructed) => {
-                todo!()
+                let n_destructed = *n_destructed;
+                let stack_size = self.call_stack.last().unwrap().stack_size;
+                assert!(self.variable_stack.len() - stack_size >= n_destructed as usize);
+                let pack_offset = self.variable_stack.len() - (stack_size + n_destructed as usize);
+                let list = List((&self.variable_stack[pack_offset..]).to_vec());
+                let list = self.collector.allocate(Arc::new(list));
+                self.variable_stack.drain(pack_offset..);
+                self.variable_stack.push(list);
             }
         }
     }
@@ -179,9 +195,8 @@ impl Interpreter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collector::IterateReference;
+    use crate::objects::LeafObject;
     use lazy_static::lazy_static;
-    use std::sync::Arc;
 
     lazy_static! {
         static ref MAIN_MODULE: ModuleId = String::from("main");
@@ -204,9 +219,7 @@ mod tests {
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     struct I32(i32);
-    impl IterateReference for I32 {
-        fn iterate_reference(&self, _c: &mut dyn FnMut(Address)) {}
-    }
+    impl LeafObject for I32 {}
 
     fn operate_add_two_i32(context: &mut dyn OperateContext) {
         let int_a = context.get_argument(0);
@@ -384,14 +397,24 @@ mod tests {
         let mut interp = Interpreter::new();
         let i32_literal = |i| ByteCode::AllocateLiteral(Box::new(move || Box::new(I32(i))));
         let fib_symbol = String::from("fib");
+        let fib_literal = || {
+            let fib_symbol = fib_symbol.clone();
+            ByteCode::AllocateLiteral(Box::new(move || {
+                Box::new(Dispatch {
+                    module_id: MAIN_MODULE.clone(),
+                    symbol: fib_symbol.clone(),
+                })
+            }))
+        };
         interp.load_module(Module {
             id: MAIN_MODULE.clone(),
-            symbol_table: [(START_SYMBOL.to_string(), 0), (fib_symbol.clone(), 5)]
+            symbol_table: [(START_SYMBOL.to_string(), 0), (fib_symbol.clone(), 6)]
                 .into_iter()
                 .collect(),
             program: vec![
                 i32_literal(10),
-                ByteCode::Call((MAIN_MODULE.clone(), fib_symbol.clone()), 1),
+                fib_literal(),
+                ByteCode::Call(1),
                 ByteCode::AssertFloating(1),
                 ByteCode::Operate(
                     1,
@@ -415,7 +438,7 @@ mod tests {
                 // ? 1 n
                 ByteCode::Operate(2, Box::new(operate_eq_two_i32)),
                 // goto '1
-                ByteCode::Jump(17),
+                ByteCode::Jump(19),
                 // n ? 1
                 ByteCode::Copy(3),
                 // 2 n
@@ -423,15 +446,16 @@ mod tests {
                 // ? 2 n
                 ByteCode::Operate(2, Box::new(operate_eq_two_i32)),
                 // goto '2
-                ByteCode::Jump(13),
+                ByteCode::Jump(15),
                 // -1 ? 2 n
                 i32_literal(-1),
                 // n -1
                 ByteCode::Copy(4),
                 // n' n
                 ByteCode::Operate(2, Box::new(operate_add_two_i32)),
+                fib_literal(),
                 // fib(n') n
-                ByteCode::Call((MAIN_MODULE.clone(), fib_symbol.clone()), 1),
+                ByteCode::Call(1),
                 ByteCode::AssertFloating(1),
                 // -2 fib(n') n
                 i32_literal(-2),
@@ -439,8 +463,9 @@ mod tests {
                 ByteCode::Copy(3),
                 // n'' n -2 fib(n')
                 ByteCode::Operate(2, Box::new(operate_add_two_i32)),
+                fib_literal(),
                 // fib(n'') n -2 fib(n')
-                ByteCode::Call((MAIN_MODULE.clone(), fib_symbol.clone()), 1),
+                ByteCode::Call(1),
                 ByteCode::AssertFloating(1),
                 // fib(n') fib(n'')
                 ByteCode::Copy(4),
