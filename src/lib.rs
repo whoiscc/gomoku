@@ -1,4 +1,6 @@
 pub mod collector;
+pub mod interpreter;
+pub mod objects;
 
 use std::any::Any;
 use std::fmt::Debug;
