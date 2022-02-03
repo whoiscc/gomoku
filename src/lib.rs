@@ -1,3 +1,4 @@
+pub mod closure;
 pub mod collector;
 pub mod interpreter;
 pub mod objects;

@@ -26,9 +26,9 @@ pub trait OperateContext {
 }
 
 pub struct Module {
-    id: ModuleId,
-    program: Vec<ByteCode>,
-    symbol_table: HashMap<String, usize>,
+    pub id: ModuleId,
+    pub program: Vec<ByteCode>,
+    pub symbol_table: HashMap<String, usize>,
 }
 
 pub struct Interpreter {
@@ -63,16 +63,16 @@ impl Interpreter {
         self.module_table.insert(module.id.clone(), module);
     }
 
-    pub fn push_call(&mut self, module_id: &ModuleId, symbol: &str) {
+    pub fn push_call(&mut self, dispatch: Dispatch) {
         let offset = *self
             .module_table
-            .get(module_id)
+            .get(&dispatch.module_id)
             .unwrap()
             .symbol_table
-            .get(symbol)
+            .get(&dispatch.symbol)
             .unwrap();
         self.call_stack.push(Frame {
-            pointer: (module_id.clone(), offset),
+            pointer: (dispatch.module_id, offset),
             stack_size: self.variable_stack.len(),
         });
     }
@@ -154,11 +154,11 @@ impl Interpreter {
                     .as_ref()
                     .downcast_ref()
                     .unwrap();
-                let (module_id, symbol) = (dispatch.module_id.clone(), dispatch.symbol.clone());
+                let dispatch = dispatch.clone();
                 self.variable_stack.remove(self.variable_stack.len() - 1); // is it useful to save it?
                 let stack_size = self.variable_stack.len() - *n_argument as usize;
                 self.call_stack.last_mut().unwrap().stack_size = stack_size;
-                self.push_call(&module_id, &symbol);
+                self.push_call(dispatch);
                 self.call_stack.last_mut().unwrap().stack_size = stack_size;
             }
             ByteCode::Return(n_returned) => {
@@ -201,6 +201,10 @@ mod tests {
     lazy_static! {
         static ref MAIN_MODULE: ModuleId = String::from("main");
         static ref START_SYMBOL: String = String::from("start");
+        static ref START_DISPATCH: Dispatch = Dispatch {
+            module_id: MAIN_MODULE.clone(),
+            symbol: START_SYMBOL.clone(),
+        };
     }
 
     #[test]
@@ -211,7 +215,7 @@ mod tests {
             program: vec![ByteCode::Return(0)],
             symbol_table: [(START_SYMBOL.clone(), 0)].into_iter().collect(),
         });
-        interp.push_call(&MAIN_MODULE, &START_SYMBOL);
+        interp.push_call(START_DISPATCH.clone());
         assert!(interp.has_step());
         interp.step();
         assert!(!interp.has_step());
@@ -256,7 +260,7 @@ mod tests {
                 ByteCode::Return(0),
             ],
         });
-        interp.push_call(&MAIN_MODULE, &START_SYMBOL);
+        interp.push_call(START_DISPATCH.clone());
         while interp.has_step() {
             interp.step();
         }
@@ -306,7 +310,7 @@ mod tests {
                 ByteCode::Return(0),
             ],
         });
-        interp.push_call(&MAIN_MODULE, &START_SYMBOL);
+        interp.push_call(START_DISPATCH.clone());
         while interp.has_step() {
             interp.step();
         }
@@ -385,7 +389,7 @@ mod tests {
                 ByteCode::Return(0),
             ],
         });
-        interp.push_call(&MAIN_MODULE, &START_SYMBOL);
+        interp.push_call(START_DISPATCH.clone());
         while interp.has_step() {
             interp.step();
         }
@@ -476,7 +480,7 @@ mod tests {
                 ByteCode::Return(1),
             ],
         });
-        interp.push_call(&MAIN_MODULE, &START_SYMBOL);
+        interp.push_call(START_DISPATCH.clone());
         while interp.has_step() {
             interp.step();
         }

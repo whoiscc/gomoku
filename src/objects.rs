@@ -25,7 +25,7 @@ impl EnumerateReference for List {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Dispatch {
     pub module_id: ModuleId,
     pub symbol: String,
