@@ -1,5 +1,7 @@
 [package]
 name = "gomoku"
+description = "Gomoku programming language"
+license = "GPL-3.0-only"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,3 +9,6 @@ edition = "2021"
 
 [dev-dependencies]
 lazy_static = "1.4.0"
+
+[dependencies]
+crossbeam = "0.8.1"

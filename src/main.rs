@@ -1,3 +1,3 @@
 fn main() {
-    println!("Hello, world!");
+    println!("Gomoku compiler frontend work in progress >_<");
 }
