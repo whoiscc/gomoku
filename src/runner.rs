@@ -34,16 +34,20 @@ impl Runner {
     }
 
     pub fn garbage_collect(&mut self) {
-        let task_set = self
+        let task_list = self
             .peer_table
             .get(&current().id())
             .unwrap()
             .task_list
             .lock()
             .unwrap();
-        self.interp
-            .garbage_collect(&task_set.iter().map(|task| task.address).collect::<Vec<_>>());
-        drop(task_set);
+        self.interp.garbage_collect(
+            &task_list
+                .iter()
+                .map(|task| task.address)
+                .collect::<Vec<_>>(),
+        );
+        drop(task_list);
     }
 
     fn module_id() -> ModuleId {
@@ -125,5 +129,26 @@ impl Runner {
             return Some(result_list[1]);
         }
         unreachable!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_task() {
+        let mut runner = Runner::new();
+        runner.set_peer_table(Arc::new(
+            [(
+                current().id(),
+                Peer {
+                    task_list: Mutex::new(Vec::new()),
+                },
+            )]
+            .into_iter()
+            .collect(),
+        ));
+        assert!(runner.prepare_task().is_none());
     }
 }
