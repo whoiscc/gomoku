@@ -1,6 +1,6 @@
 use crate::collector::EnumerateReference;
 use crate::interpreter::ModuleId;
-use crate::{Address, Handle};
+use crate::Address;
 
 pub trait LeafObject {}
 impl<T: LeafObject> EnumerateReference for T {
@@ -34,10 +34,9 @@ pub struct Dispatch {
 impl LeafObject for Dispatch {}
 
 /// The literal of closure, present in byte code
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ClosureMeta {
     pub dispatch: Dispatch,
-    pub stage_list: Vec<u8>, // local variable count on every async stage
     pub n_capture: u8,
     pub n_argument: u8,
 }
@@ -47,7 +46,6 @@ impl LeafObject for ClosureMeta {}
 #[derive(Debug)]
 pub struct Closure {
     pub dispatch: Dispatch,
-    pub stage_list: Vec<u8>,
     pub capture_list: Vec<Address>,
     pub n_argument: u8,
 }
@@ -59,11 +57,10 @@ impl EnumerateReference for Closure {
     }
 }
 
-/// The runtime object for a coroutine, turned from a closure object after invoking
+/// The runtime object for a coroutine, turned from a closure object after invoking.
+/// Similar to Rust's `Future`.
 #[derive(Debug)]
 pub struct AsyncState {
     pub dispatch: Dispatch,
-    pub stage: u8,
-    pub variable_list: Vec<Handle>,
+    pub variable_list: Vec<Address>,
 }
-impl LeafObject for AsyncState {}

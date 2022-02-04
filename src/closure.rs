@@ -12,7 +12,6 @@ pub fn operate_new_closure(context: &mut dyn OperateContext) {
         .collect();
     let closure = Closure {
         dispatch: meta.dispatch.clone(),
-        stage_list: meta.stage_list.clone(),
         capture_list,
         n_argument: meta.n_argument,
     };
@@ -38,8 +37,9 @@ pub fn operate_prepare_closure(context: &mut dyn OperateContext) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interpreter::{ByteCode, Interpreter, Module, OperateContext};
+    use crate::interpreter::{ByteCode, Interpreter, Module};
     use crate::objects::{Dispatch, LeafObject};
+    use crate::GeneralInterface;
     use lazy_static::lazy_static;
 
     lazy_static! {
@@ -51,77 +51,70 @@ mod tests {
         };
     }
 
-    #[allow(unused)]
-    fn operate_destruct_list(context: &mut dyn OperateContext) {
-        let list = context.get_argument(0);
-        let list: &List = context.inspect(list).as_ref().downcast_ref().unwrap();
-        if let [x, xs @ ..] = &list.0[..] {
-            let x = *x;
-            let xs = List(xs.to_vec());
-            let xs = context.allocate(Arc::new(xs));
-            context.push_result(x);
-            context.push_result(xs);
-        } else {
-            panic!("destruct on empty list");
-        }
-    }
-
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     struct I32(i32);
     impl LeafObject for I32 {}
+
+    fn push_literal<T: GeneralInterface + Clone>(literal: T) -> ByteCode {
+        ByteCode::Operate(
+            0,
+            Box::new(move |context| {
+                let literal = context.allocate(Arc::new(literal.clone()));
+                context.push_result(literal);
+            }),
+        )
+    }
+
+    fn assert_top<T: GeneralInterface + Eq>(expect: T) -> ByteCode {
+        ByteCode::Operate(
+            1,
+            Box::new(move |context| {
+                assert_eq!(
+                    context
+                        .inspect(context.get_argument(0))
+                        .as_ref()
+                        .downcast_ref(),
+                    Some(&expect)
+                );
+            }),
+        )
+    }
 
     #[test]
     fn add_two_closure() {
         let mut interp = Interpreter::new();
         let closure_symbol = || String::from("[closure]");
-        let assert_i32 = |i| {
-            ByteCode::Operate(
-                1,
-                Box::new(move |context| {
-                    assert_eq!(
-                        context
-                            .inspect(context.get_argument(0))
-                            .as_ref()
-                            .downcast_ref(),
-                        Some(&I32(i))
-                    );
-                }),
-            )
-        };
         interp.load_module(Module {
             id: MAIN_MODULE.clone(),
             symbol_table: [(START_SYMBOL.clone(), 0), (closure_symbol(), 14)]
                 .into_iter()
                 .collect(),
             program: vec![
-                ByteCode::AllocateLiteral(Box::new(move || {
-                    Box::new(ClosureMeta {
-                        dispatch: Dispatch {
-                            module_id: MAIN_MODULE.clone(),
-                            symbol: closure_symbol(),
-                        },
-                        stage_list: Vec::new(),
-                        n_capture: 1,
-                        n_argument: 1,
-                    })
-                })),
-                ByteCode::AllocateLiteral(Box::new(|| Box::new(I32(2)))),
+                push_literal(ClosureMeta {
+                    dispatch: Dispatch {
+                        module_id: MAIN_MODULE.clone(),
+                        symbol: closure_symbol(),
+                    },
+                    n_capture: 1,
+                    n_argument: 1,
+                }),
+                push_literal(I32(2)),
                 // [add two]
                 ByteCode::Operate(2, Box::new(operate_new_closure)),
                 // 1 [add two]
-                ByteCode::AllocateLiteral(Box::new(|| Box::new(I32(1)))),
+                push_literal(I32(1)),
                 // [dispatch] [variable pack] 1 [add two]
                 ByteCode::Operate(2, Box::new(operate_prepare_closure)),
                 // [add two](1) 1 [add two]
                 ByteCode::Call(1),
                 ByteCode::AssertFloating(1),
-                assert_i32(3),
+                assert_top(I32(3)),
                 // [add two]
                 ByteCode::Copy(3),
-                ByteCode::AllocateLiteral(Box::new(|| Box::new(I32(40)))),
+                push_literal(I32(40)),
                 ByteCode::Operate(2, Box::new(operate_prepare_closure)),
                 ByteCode::Call(1),
-                assert_i32(42),
+                assert_top(I32(42)),
                 ByteCode::Return(0),
                 // [closure]
                 ByteCode::AssertFloating(1),

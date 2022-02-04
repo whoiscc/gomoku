@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 pub enum ByteCode {
-    AllocateLiteral(Box<dyn Fn() -> Box<dyn GeneralInterface>>),
     Copy(u8),
     Operate(u8, Box<dyn Fn(&mut dyn OperateContext)>),
     Jump(i8), // jump if stack top is true, by instruction offset
@@ -116,10 +115,6 @@ impl Interpreter {
         let instruction = &self.module_table.get(&pointer.0).unwrap().program[pointer.1];
         pointer.1 += 1;
         match instruction {
-            ByteCode::AllocateLiteral(create) => {
-                let address = self.collector.allocate(create().into());
-                self.variable_stack.push(address);
-            }
             ByteCode::Copy(offset) => {
                 self.variable_stack
                     .push(self.variable_stack[self.variable_stack.len() - *offset as usize]);
@@ -221,6 +216,31 @@ mod tests {
         assert!(!interp.has_step());
     }
 
+    fn push_literal<T: GeneralInterface + Clone>(literal: T) -> ByteCode {
+        ByteCode::Operate(
+            0,
+            Box::new(move |context| {
+                let literal = context.allocate(Arc::new(literal.clone()));
+                context.push_result(literal);
+            }),
+        )
+    }
+
+    fn assert_top<T: GeneralInterface + Eq>(expect: T) -> ByteCode {
+        ByteCode::Operate(
+            1,
+            Box::new(move |context| {
+                assert_eq!(
+                    context
+                        .inspect(context.get_argument(0))
+                        .as_ref()
+                        .downcast_ref(),
+                    Some(&expect)
+                );
+            }),
+        )
+    }
+
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     struct I32(i32);
     impl LeafObject for I32 {}
@@ -241,22 +261,10 @@ mod tests {
             id: MAIN_MODULE.clone(),
             symbol_table: [(START_SYMBOL.clone(), 0)].into_iter().collect(),
             program: vec![
-                ByteCode::AllocateLiteral(Box::new(|| Box::new(I32(20)))),
-                ByteCode::AllocateLiteral(Box::new(|| Box::new(I32(22)))),
+                push_literal(I32(20)),
+                push_literal(I32(22)),
                 ByteCode::Operate(2, Box::new(operate_add_two_i32)),
-                ByteCode::Operate(
-                    1,
-                    Box::new(|context| {
-                        assert_eq!(
-                            context
-                                .inspect(context.get_argument(0))
-                                .as_ref()
-                                .downcast_ref::<I32>()
-                                .unwrap(),
-                            &I32(42)
-                        );
-                    }),
-                ),
+                assert_top(I32(42)),
                 ByteCode::Return(0),
             ],
         });
@@ -283,30 +291,12 @@ mod tests {
             id: MAIN_MODULE.clone(),
             symbol_table: [(START_SYMBOL.clone(), 0)].into_iter().collect(),
             program: vec![
-                ByteCode::AllocateLiteral(Box::new(|| Box::new(I32(20)))),
-                ByteCode::AllocateLiteral(Box::new(|| Box::new(I32(22)))),
+                push_literal(I32(20)),
+                push_literal(I32(22)),
                 ByteCode::Operate(2, Box::new(operate_add_i32_in_place)),
-                ByteCode::Operate(
-                    2,
-                    Box::new(|context| {
-                        assert_eq!(
-                            context
-                                .inspect(context.get_argument(1))
-                                .as_ref()
-                                .downcast_ref::<I32>()
-                                .unwrap(),
-                            &I32(42)
-                        );
-                        assert_eq!(
-                            context
-                                .inspect(context.get_argument(0))
-                                .as_ref()
-                                .downcast_ref::<I32>()
-                                .unwrap(),
-                            &I32(20)
-                        );
-                    }),
-                ),
+                assert_top(I32(42)),
+                ByteCode::Copy(2),
+                assert_top(I32(20)),
                 ByteCode::Return(0),
             ],
         });
@@ -334,18 +324,17 @@ mod tests {
     fn fib_10() {
         // in a very wasteful way...
         let mut interp = Interpreter::new();
-        let i32_literal = |i| ByteCode::AllocateLiteral(Box::new(move || Box::new(I32(i))));
         interp.load_module(Module {
             id: MAIN_MODULE.clone(),
             symbol_table: [(START_SYMBOL.clone(), 0)].into_iter().collect(),
             program: vec![
-                i32_literal(10), // n
-                i32_literal(-1), // _
-                i32_literal(0),  // b
-                i32_literal(1),  // a
-                i32_literal(1),  // 1
-                i32_literal(1),  // i
-                i32_literal(-1), // _
+                push_literal(I32(10)), // n
+                push_literal(I32(-1)), // _
+                push_literal(I32(0)),  // b
+                push_literal(I32(1)),  // a
+                push_literal(I32(1)),  // 1
+                push_literal(I32(1)),  // i
+                push_literal(I32(-1)), // _
                 // 'loop: T i' 1 a' a ? n => _ i 1 a b _ n
                 // i _ i 1 a b _ n
                 ByteCode::Copy(2),
@@ -368,24 +357,12 @@ mod tests {
                 // i' 1 a' a ? n
                 ByteCode::Operate(2, Box::new(operate_add_i32_in_place)),
                 // T i' 1 a' b ? n
-                ByteCode::AllocateLiteral(Box::new(|| Box::new(True))),
+                push_literal(True),
                 // goto 'loop
                 ByteCode::Jump(-12),
                 // 'end: ? n i _ i 1 a
                 ByteCode::Copy(7),
-                ByteCode::Operate(
-                    1,
-                    Box::new(|context| {
-                        assert_eq!(
-                            context
-                                .inspect(context.get_argument(0))
-                                .as_ref()
-                                .downcast_ref::<I32>()
-                                .unwrap(),
-                            &I32(55)
-                        );
-                    }),
-                ),
+                assert_top(I32(55)),
                 ByteCode::Return(0),
             ],
         });
@@ -399,16 +376,10 @@ mod tests {
     fn fib_10_recursive() {
         // in a very naive way...
         let mut interp = Interpreter::new();
-        let i32_literal = |i| ByteCode::AllocateLiteral(Box::new(move || Box::new(I32(i))));
         let fib_symbol = String::from("fib");
-        let fib_literal = || {
-            let fib_symbol = fib_symbol.clone();
-            ByteCode::AllocateLiteral(Box::new(move || {
-                Box::new(Dispatch {
-                    module_id: MAIN_MODULE.clone(),
-                    symbol: fib_symbol.clone(),
-                })
-            }))
+        let fib_dispatch = Dispatch {
+            module_id: MAIN_MODULE.clone(),
+            symbol: fib_symbol.clone(),
         };
         interp.load_module(Module {
             id: MAIN_MODULE.clone(),
@@ -416,29 +387,17 @@ mod tests {
                 .into_iter()
                 .collect(),
             program: vec![
-                i32_literal(10),
-                fib_literal(),
+                push_literal(I32(10)),
+                push_literal(fib_dispatch.clone()),
                 ByteCode::Call(1),
                 ByteCode::AssertFloating(1),
-                ByteCode::Operate(
-                    1,
-                    Box::new(|context| {
-                        assert_eq!(
-                            context
-                                .inspect(context.get_argument(0))
-                                .as_ref()
-                                .downcast_ref::<I32>()
-                                .unwrap(),
-                            &I32(55)
-                        );
-                    }),
-                ),
+                assert_top(I32(55)),
                 ByteCode::Return(0),
                 // fib
                 // n
                 ByteCode::AssertFloating(1),
                 // 1 n
-                i32_literal(1),
+                push_literal(I32(1)),
                 // ? 1 n
                 ByteCode::Operate(2, Box::new(operate_eq_two_i32)),
                 // goto '1
@@ -446,28 +405,27 @@ mod tests {
                 // n ? 1
                 ByteCode::Copy(3),
                 // 2 n
-                i32_literal(2),
+                push_literal(I32(2)),
                 // ? 2 n
                 ByteCode::Operate(2, Box::new(operate_eq_two_i32)),
                 // goto '2
                 ByteCode::Jump(15),
                 // -1 ? 2 n
-                i32_literal(-1),
+                push_literal(I32(-1)),
                 // n -1
                 ByteCode::Copy(4),
                 // n' n
                 ByteCode::Operate(2, Box::new(operate_add_two_i32)),
-                fib_literal(),
-                // fib(n') n
+                push_literal(fib_dispatch.clone()),
                 ByteCode::Call(1),
                 ByteCode::AssertFloating(1),
                 // -2 fib(n') n
-                i32_literal(-2),
+                push_literal(I32(-2)),
                 // n -2 fib(n')
                 ByteCode::Copy(3),
                 // n'' n -2 fib(n')
                 ByteCode::Operate(2, Box::new(operate_add_two_i32)),
-                fib_literal(),
+                push_literal(fib_dispatch.clone()),
                 // fib(n'') n -2 fib(n')
                 ByteCode::Call(1),
                 ByteCode::AssertFloating(1),
@@ -476,7 +434,7 @@ mod tests {
                 ByteCode::Operate(2, Box::new(operate_add_two_i32)),
                 ByteCode::Return(1),
                 // '1 '2
-                i32_literal(1),
+                push_literal(I32(1)),
                 ByteCode::Return(1),
             ],
         });
