@@ -1,6 +1,9 @@
-use crate::{Address, GeneralInterface, Handle};
+use crate::{GeneralInterface, Handle};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::thread::{current, ThreadId};
+
+pub type Address = (ThreadId, u64);
 
 pub trait EnumerateReference {
     fn enumerate_reference(&self, callback: &mut dyn FnMut(Address));
@@ -9,21 +12,22 @@ pub trait EnumerateReference {
 #[derive(Debug)]
 pub struct Collector {
     storage: HashMap<Address, Handle>,
-    allocate_address: Address,
+    allocate_number: u64,
 }
 
 impl Collector {
     pub fn new() -> Self {
         Self {
             storage: HashMap::new(),
-            allocate_address: 0,
+            allocate_number: 0,
         }
     }
 
     pub fn allocate(&mut self, handle: Handle) -> Address {
-        self.allocate_address += 1;
-        self.storage.insert(self.allocate_address, handle);
-        self.allocate_address
+        self.allocate_number += 1;
+        let address = (current().id(), self.allocate_number);
+        self.storage.insert(address, handle);
+        address
     }
 
     pub fn inspect(&self, address: Address) -> &dyn GeneralInterface {

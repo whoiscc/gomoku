@@ -25,4 +25,3 @@ where
 }
 
 pub type Handle = Arc<dyn GeneralInterface>;
-pub type Address = u64;

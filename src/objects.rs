@@ -1,6 +1,5 @@
-use crate::collector::EnumerateReference;
+use crate::collector::{Address, EnumerateReference};
 use crate::interpreter::ModuleId;
-use crate::Address;
 
 pub trait LeafObject {}
 impl<T: LeafObject> EnumerateReference for T {

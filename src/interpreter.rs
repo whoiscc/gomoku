@@ -1,6 +1,6 @@
-use crate::collector::Collector;
+use crate::collector::{Address, Collector};
 use crate::objects::{Dispatch, False, List, True};
-use crate::{Address, GeneralInterface, Handle};
+use crate::{GeneralInterface, Handle};
 use std::collections::HashMap;
 use std::sync::Arc;
 
