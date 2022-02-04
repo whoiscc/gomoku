@@ -1,5 +1,5 @@
 use crate::interpreter::OperateContext;
-use crate::objects::{Closure, ClosureMeta, List};
+use crate::objects::{Closure, ClosureMeta, False, List, Pending, Ready, True};
 use std::sync::Arc;
 
 impl Closure {
@@ -23,7 +23,6 @@ impl Closure {
     // result: 1 pack of variables (captured) + 1 Dispatch
     pub fn operate_apply(context: &mut dyn OperateContext) {
         let closure = context.get_argument(0);
-        println!("{:?}", context.inspect(closure));
         let closure: &Closure = context.inspect(closure).as_ref().downcast_ref().unwrap();
         let dispatch = closure.dispatch.clone();
         let pack = List(closure.capture_list.clone());
@@ -32,14 +31,46 @@ impl Closure {
         let dispatch = context.allocate(Arc::new(dispatch));
         context.push_result(dispatch);
     }
+
+    // arguments: 1 mutable Closure + 1 mutable Pending or Ready + 1 pack of variables
+    // result: 1 True or False, if True Ready is extracted, if False it is Pending
+    pub fn operate_poll(context: &mut dyn OperateContext) {
+        let poll_result = context.get_argument(1);
+        let poll_result = context.inspect(poll_result).as_ref();
+        if poll_result.is::<Pending>() {
+            let result = context.allocate(Arc::new(False)); // TODO reuse public shared constant
+            context.push_result(result);
+            return;
+        }
+        let poll_result: &Ready = poll_result.downcast_ref().unwrap();
+        let address = poll_result.0;
+        context.set_argument(1, address);
+        let capture_list = context.get_argument(2);
+        let capture_list: &List = context
+            .inspect(capture_list)
+            .as_ref()
+            .downcast_ref()
+            .unwrap();
+        let capture_list = capture_list.0.clone();
+        let closure = context.get_argument(0);
+        let closure: &mut Closure = context
+            .inspect_mut(closure)
+            .as_mut()
+            .downcast_mut()
+            .unwrap();
+        closure.capture_list = capture_list;
+        let result = context.allocate(Arc::new(True)); // TODO
+        context.push_result(result);
+    }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interpreter::{ByteCode, Interpreter, Module};
+    use crate::interpreter::{ByteCode, Interpreter, Module, OperateContext};
     use crate::objects::{Dispatch, LeafObject};
-    use crate::GeneralInterface;
+    use crate::{GeneralInterface, Handle};
     use lazy_static::lazy_static;
+    use std::sync::Mutex;
 
     lazy_static! {
         static ref MAIN_MODULE: String = String::from("main");
@@ -134,6 +165,25 @@ mod tests {
         interp.push_call(START_DISPATCH.clone());
         while interp.has_step() {
             interp.step();
+        }
+    }
+
+    #[derive(Debug)]
+    struct Notify(Mutex<bool>);
+    impl LeafObject for Notify {}
+    impl Notify {
+        fn operate_poll(context: &mut dyn OperateContext) {
+            let notify = context.get_argument(0);
+            let notify: &Notify = context.inspect(notify).as_ref().downcast_ref().unwrap();
+            let signal = *notify.0.lock().unwrap();
+            let result: Handle = if signal {
+                let unit = context.allocate(Arc::new(List(Vec::new())));
+                Arc::new(Ready(unit))
+            } else {
+                Arc::new(Pending)
+            };
+            let result = context.allocate(result);
+            context.push_result(result);
         }
     }
 }

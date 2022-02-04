@@ -54,3 +54,15 @@ impl EnumerateReference for Closure {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Pending;
+impl LeafObject for Pending {}
+
+#[derive(Debug, Clone)]
+pub struct Ready(pub Address);
+impl EnumerateReference for Ready {
+    fn enumerate_reference(&self, callback: &mut dyn FnMut(Address)) {
+        callback(self.0);
+    }
+}

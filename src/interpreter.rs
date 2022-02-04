@@ -22,6 +22,7 @@ pub trait OperateContext {
     fn inspect_mut(&mut self, address: Address) -> &mut dyn GeneralInterface;
     fn allocate(&mut self, handle: Handle) -> Address;
     fn get_argument(&self, index: u8) -> Address;
+    fn set_argument(&mut self, index: u8, address: Address);
     fn push_result(&mut self, address: Address);
 }
 
@@ -104,6 +105,9 @@ impl<'i> OperateContext for Context<'i> {
     }
     fn get_argument(&self, index: u8) -> Address {
         self.variable_stack[self.argument_offset + index as usize]
+    }
+    fn set_argument(&mut self, index: u8, address: Address) {
+        self.variable_stack[self.argument_offset + index as usize] = address;
     }
     fn push_result(&mut self, address: Address) {
         self.variable_stack.push(address);
