@@ -14,6 +14,7 @@ impl Closure {
         let closure = Closure {
             dispatch: meta.dispatch.clone(),
             capture_list,
+            export_table: None,
         };
         let closure = context.allocate(Arc::new(closure));
         context.push_result(closure);
@@ -42,9 +43,11 @@ impl Closure {
             context.push_result(result);
             return;
         }
+
         let poll_result: &Ready = poll_result.downcast_ref().unwrap();
         let address = poll_result.0;
         context.set_argument(1, address);
+
         let capture_list = context.get_argument(2);
         let capture_list: &List = context
             .inspect(capture_list)
@@ -52,6 +55,8 @@ impl Closure {
             .downcast_ref()
             .unwrap();
         let capture_list = capture_list.0.clone();
+        let export_table = context.export(&capture_list);
+
         let closure = context.get_argument(0);
         let closure: &mut Closure = context
             .inspect_mut(closure)
@@ -59,6 +64,8 @@ impl Closure {
             .downcast_mut()
             .unwrap();
         closure.capture_list = capture_list;
+        closure.export_table = Some(export_table);
+
         let result = context.allocate(Arc::new(True)); // TODO
         context.push_result(result);
     }

@@ -1,4 +1,4 @@
-use crate::{GeneralInterface, Handle};
+use crate::{GeneralInterface, Handle, WeakHandle};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread::{current, ThreadId};
@@ -30,6 +30,25 @@ impl Collector {
         address
     }
 
+    pub fn import(&mut self, address: Address, weak_handle: WeakHandle) {
+        self.storage.insert(address, weak_handle.upgrade().unwrap());
+    }
+
+    pub fn export(&self, address_list: &[Address]) -> HashMap<Address, WeakHandle> {
+        let mut gray_stack = address_list.to_vec();
+        let mut export_table = HashMap::new();
+        while let Some(address) = gray_stack.pop() {
+            let handle = self.storage.get(&address).unwrap();
+            export_table.insert(address, Arc::downgrade(handle));
+            handle.enumerate_reference(&mut |address| {
+                if !export_table.contains_key(&address) {
+                    gray_stack.push(address);
+                }
+            });
+        }
+        export_table
+    }
+
     pub fn inspect(&self, address: Address) -> &dyn GeneralInterface {
         &**self.storage.get(&address).unwrap()
     }
@@ -42,19 +61,12 @@ impl Collector {
         self.storage.len()
     }
 
-    pub fn mark_copy(&mut self, root_list: &[Address]) {
-        let mut gray_stack: Vec<_> = root_list.to_vec();
-        let mut storage = HashMap::new();
-        while let Some(address) = gray_stack.pop() {
-            let handle = self.storage.get(&address).unwrap();
-            storage.insert(address, handle.clone());
-            handle.enumerate_reference(&mut |address| {
-                if !storage.contains_key(&address) {
-                    gray_stack.push(address);
-                }
-            });
-        }
-        self.storage = storage;
+    pub fn copy_collect(&mut self, root_list: &[Address]) {
+        self.storage = self
+            .export(root_list)
+            .into_iter()
+            .map(|(address, handle)| (address, handle.upgrade().unwrap()))
+            .collect();
     }
 }
 
@@ -85,7 +97,7 @@ mod tests {
             c.allocate(Arc::new(GeneralNode(i, Vec::new())));
         }
         assert_eq!(c.count(), 10);
-        c.mark_copy(&[]);
+        c.copy_collect(&[]);
         assert_eq!(c.count(), 0);
     }
 
@@ -103,7 +115,7 @@ mod tests {
             }
         }
         let root_list = [c.allocate(Arc::new(root))];
-        c.mark_copy(&root_list);
+        c.copy_collect(&root_list);
         assert_eq!(c.count(), 7 + 1);
         for weak in side_list {
             if let Some(handle) = weak.upgrade() {
@@ -129,7 +141,7 @@ mod tests {
             .unwrap()
             .1
             .push(address1);
-        c.mark_copy(&[]);
+        c.copy_collect(&[]);
         assert_eq!(c.count(), 0);
     }
 }

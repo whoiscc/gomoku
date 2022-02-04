@@ -6,7 +6,7 @@ pub mod objects;
 use crate::collector::EnumerateReference;
 use std::any::Any;
 use std::fmt::Debug;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 pub trait GeneralInterface: Send + Sync + Debug + EnumerateReference + Any {
     fn as_ref(&self) -> &dyn Any;
@@ -25,3 +25,4 @@ where
 }
 
 pub type Handle = Arc<dyn GeneralInterface>;
+pub type WeakHandle = Weak<dyn GeneralInterface>;

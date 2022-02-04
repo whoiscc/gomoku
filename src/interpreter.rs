@@ -1,6 +1,6 @@
 use crate::collector::{Address, Collector};
 use crate::objects::{Dispatch, False, List, True};
-use crate::{GeneralInterface, Handle};
+use crate::{GeneralInterface, Handle, WeakHandle};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -21,6 +21,7 @@ pub trait OperateContext {
     fn inspect(&self, address: Address) -> &dyn GeneralInterface;
     fn inspect_mut(&mut self, address: Address) -> &mut dyn GeneralInterface;
     fn allocate(&mut self, handle: Handle) -> Address;
+    fn export(&self, address_list: &[Address]) -> HashMap<Address, WeakHandle>;
     fn get_argument(&self, index: u8) -> Address;
     fn set_argument(&mut self, index: u8, address: Address);
     fn push_result(&mut self, address: Address);
@@ -83,7 +84,7 @@ impl Interpreter {
     }
 
     pub fn garbage_collect(&mut self) {
-        self.collector.mark_copy(&self.variable_stack);
+        self.collector.copy_collect(&self.variable_stack);
     }
 }
 
@@ -102,6 +103,9 @@ impl<'i> OperateContext for Context<'i> {
     }
     fn allocate(&mut self, handle: Handle) -> Address {
         self.collector.allocate(handle)
+    }
+    fn export(&self, address_list: &[Address]) -> HashMap<Address, WeakHandle> {
+        self.collector.export(address_list)
     }
     fn get_argument(&self, index: u8) -> Address {
         self.variable_stack[self.argument_offset + index as usize]
