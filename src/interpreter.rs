@@ -94,8 +94,10 @@ impl Interpreter {
         self.variable_stack.push(address);
     }
 
-    pub fn garbage_collect(&mut self) {
-        self.collector.copy_collect(&self.variable_stack);
+    pub fn garbage_collect(&mut self, external_list: &[Address]) {
+        let mut root_list = self.variable_stack.clone();
+        root_list.extend_from_slice(external_list);
+        self.collector.copy_collect(&root_list);
     }
 }
 
@@ -229,26 +231,29 @@ impl Interpreter {
 mod tests {
     use super::*;
     use crate::objects::LeafObject;
-    use lazy_static::lazy_static;
 
-    lazy_static! {
-        static ref MAIN_MODULE: ModuleId = String::from("main");
-        static ref START_SYMBOL: String = String::from("start");
-        static ref START_DISPATCH: Dispatch = Dispatch {
-            module_id: MAIN_MODULE.clone(),
-            symbol: START_SYMBOL.clone(),
-        };
+    fn main_module() -> ModuleId {
+        String::from("main")
+    }
+    fn start_symbol() -> String {
+        String::from("start")
+    }
+    fn start_dispatch() -> Dispatch {
+        Dispatch {
+            module_id: main_module(),
+            symbol: start_symbol(),
+        }
     }
 
     #[test]
     fn simple_step() {
         let mut interp = Interpreter::new();
         interp.load_module(Module {
-            id: MAIN_MODULE.clone(),
+            id: main_module(),
             program: vec![ByteCode::Return(0)],
-            symbol_table: [(START_SYMBOL.clone(), 0)].into_iter().collect(),
+            symbol_table: [(start_symbol(), 0)].into_iter().collect(),
         });
-        interp.push_call(START_DISPATCH.clone(), 0);
+        interp.push_call(start_dispatch(), 0);
         assert!(interp.has_step());
         interp.step();
         assert!(!interp.has_step());
@@ -319,8 +324,8 @@ mod tests {
     fn add_two_i32() {
         let mut interp = Interpreter::new();
         interp.load_module(Module {
-            id: MAIN_MODULE.clone(),
-            symbol_table: [(START_SYMBOL.clone(), 0)].into_iter().collect(),
+            id: main_module(),
+            symbol_table: [(start_symbol(), 0)].into_iter().collect(),
             program: vec![
                 push_literal(I32(20)),
                 push_literal(I32(22)),
@@ -329,7 +334,7 @@ mod tests {
                 ByteCode::Return(0),
             ],
         });
-        interp.push_call(START_DISPATCH.clone(), 0);
+        interp.push_call(start_dispatch(), 0);
         while interp.has_step() {
             interp.step();
         }
@@ -339,8 +344,8 @@ mod tests {
     fn add_i32_in_place() {
         let mut interp = Interpreter::new();
         interp.load_module(Module {
-            id: MAIN_MODULE.clone(),
-            symbol_table: [(START_SYMBOL.clone(), 0)].into_iter().collect(),
+            id: main_module(),
+            symbol_table: [(start_symbol(), 0)].into_iter().collect(),
             program: vec![
                 push_literal(I32(20)),
                 push_literal(I32(22)),
@@ -351,7 +356,7 @@ mod tests {
                 ByteCode::Return(0),
             ],
         });
-        interp.push_call(START_DISPATCH.clone(), 0);
+        interp.push_call(start_dispatch(), 0);
         while interp.has_step() {
             interp.step();
         }
@@ -362,8 +367,8 @@ mod tests {
         // in a very wasteful way...
         let mut interp = Interpreter::new();
         interp.load_module(Module {
-            id: MAIN_MODULE.clone(),
-            symbol_table: [(START_SYMBOL.clone(), 0)].into_iter().collect(),
+            id: main_module(),
+            symbol_table: [(start_symbol(), 0)].into_iter().collect(),
             program: vec![
                 push_literal(I32(10)), // n
                 push_literal(I32(-1)), // _
@@ -403,7 +408,7 @@ mod tests {
                 ByteCode::Return(0),
             ],
         });
-        interp.push_call(START_DISPATCH.clone(), 0);
+        interp.push_call(start_dispatch(), 0);
         while interp.has_step() {
             interp.step();
         }
@@ -415,12 +420,12 @@ mod tests {
         let mut interp = Interpreter::new();
         let fib_symbol = String::from("fib");
         let fib_dispatch = Dispatch {
-            module_id: MAIN_MODULE.clone(),
+            module_id: main_module(),
             symbol: fib_symbol.clone(),
         };
         interp.load_module(Module {
-            id: MAIN_MODULE.clone(),
-            symbol_table: [(START_SYMBOL.to_string(), 0), (fib_symbol.clone(), 6)]
+            id: main_module(),
+            symbol_table: [(start_symbol(), 0), (fib_symbol.clone(), 6)]
                 .into_iter()
                 .collect(),
             program: vec![
@@ -475,7 +480,7 @@ mod tests {
                 ByteCode::Return(1),
             ],
         });
-        interp.push_call(START_DISPATCH.clone(), 0);
+        interp.push_call(start_dispatch(), 0);
         while interp.has_step() {
             interp.step();
         }

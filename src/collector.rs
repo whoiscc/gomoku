@@ -31,7 +31,12 @@ impl Collector {
     }
 
     pub fn import(&mut self, address: Address, weak_handle: WeakHandle) {
-        self.storage.insert(address, weak_handle.upgrade().unwrap());
+        if let Some(exist) = self.storage.insert(address, weak_handle.upgrade().unwrap()) {
+            assert!(
+                Arc::downgrade(&exist).ptr_eq(&weak_handle),
+                "address corruption"
+            );
+        }
     }
 
     pub fn export(&self, address_list: &[Address]) -> HashMap<Address, WeakHandle> {

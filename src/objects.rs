@@ -1,7 +1,5 @@
 use crate::collector::{Address, EnumerateReference};
 use crate::interpreter::{ModuleId, OperateContext};
-use crate::WeakHandle;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 pub trait LeafObject {}
@@ -48,7 +46,6 @@ impl LeafObject for ClosureMeta {}
 pub struct Closure {
     pub dispatch: Dispatch,
     pub capture_list: Vec<Address>,
-    pub export_table: Option<HashMap<Address, WeakHandle>>,
 }
 impl EnumerateReference for Closure {
     fn enumerate_reference(&self, callback: &mut dyn FnMut(Address)) {

@@ -14,7 +14,6 @@ impl Closure {
         let closure = Closure {
             dispatch: meta.dispatch.clone(),
             capture_list,
-            export_table: None,
         };
         let closure = context.allocate(Arc::new(closure));
         context.push_result(closure);
@@ -46,7 +45,6 @@ impl Closure {
                 .downcast_ref()
                 .unwrap();
             let capture_list = capture_list.0.clone();
-            let export_table = context.export(&capture_list);
 
             let closure = context.get_argument(0);
             let closure: &mut Closure = context
@@ -55,7 +53,6 @@ impl Closure {
                 .downcast_mut()
                 .unwrap();
             closure.capture_list = capture_list;
-            closure.export_table = Some(export_table);
 
             let result = context.allocate(Arc::new(False)); // TODO reuse public shared constant
             context.push_result(result);
@@ -73,19 +70,22 @@ impl Closure {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interpreter::{ByteCode, Interpreter, Module, OperateContext};
+    use crate::interpreter::{ByteCode, Interpreter, Module, ModuleId, OperateContext};
     use crate::objects::{Dispatch, LeafObject};
     use crate::{GeneralInterface, Handle};
-    use lazy_static::lazy_static;
     use std::sync::Mutex;
 
-    lazy_static! {
-        static ref MAIN_MODULE: String = String::from("main");
-        static ref START_SYMBOL: String = String::from("start");
-        static ref START_DISPATCH: Dispatch = Dispatch {
-            module_id: MAIN_MODULE.clone(),
-            symbol: START_SYMBOL.clone(),
-        };
+    fn main_module() -> ModuleId {
+        String::from("main")
+    }
+    fn start_symbol() -> String {
+        String::from("start")
+    }
+    fn start_dispatch() -> Dispatch {
+        Dispatch {
+            module_id: main_module(),
+            symbol: start_symbol(),
+        }
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,14 +132,14 @@ mod tests {
         let mut interp = Interpreter::new();
         let closure_symbol = || String::from("(closure)");
         interp.load_module(Module {
-            id: MAIN_MODULE.clone(),
-            symbol_table: [(START_SYMBOL.clone(), 0), (closure_symbol(), 14)]
+            id: main_module(),
+            symbol_table: [(start_symbol(), 0), (closure_symbol(), 14)]
                 .into_iter()
                 .collect(),
             program: vec![
                 push_literal(ClosureMeta {
                     dispatch: Dispatch {
-                        module_id: MAIN_MODULE.clone(),
+                        module_id: main_module(),
                         symbol: closure_symbol(),
                     },
                     n_capture: 1,
@@ -169,7 +169,7 @@ mod tests {
                 ByteCode::Return(1),
             ],
         });
-        interp.push_call(START_DISPATCH.clone(), 0);
+        interp.push_call(start_dispatch(), 0);
         while interp.has_step() {
             interp.step();
         }
@@ -180,14 +180,14 @@ mod tests {
         let mut interp = Interpreter::new();
         let poll_symbol = String::from("(poll)");
         interp.load_module(Module {
-            id: MAIN_MODULE.clone(),
-            symbol_table: [(START_SYMBOL.clone(), 0), (poll_symbol.clone(), 8)]
+            id: main_module(),
+            symbol_table: [(start_symbol(), 0), (poll_symbol.clone(), 8)]
                 .into_iter()
                 .collect(),
             program: vec![
                 push_literal(ClosureMeta {
                     dispatch: Dispatch {
-                        module_id: MAIN_MODULE.clone(),
+                        module_id: main_module(),
                         symbol: poll_symbol.clone(),
                     },
                     n_capture: 0,
@@ -207,7 +207,7 @@ mod tests {
                 ByteCode::Return(1),
             ],
         });
-        interp.push_call(START_DISPATCH.clone(), 0);
+        interp.push_call(start_dispatch(), 0);
         while interp.has_step() {
             interp.step();
         }
@@ -247,8 +247,8 @@ mod tests {
         let mut interp = Interpreter::new();
         let poll_symbol = String::from("(poll)");
         interp.load_module(Module {
-            id: MAIN_MODULE.clone(),
-            symbol_table: [(START_SYMBOL.clone(), 0), (poll_symbol.clone(), 7)]
+            id: main_module(),
+            symbol_table: [(start_symbol(), 0), (poll_symbol.clone(), 7)]
                 .into_iter()
                 .collect(),
             program: vec![
@@ -273,17 +273,16 @@ mod tests {
         let notify = interp.collector.allocate(notify_handle.clone());
         let notify_closure = Closure {
             dispatch: Dispatch {
-                module_id: MAIN_MODULE.clone(),
+                module_id: main_module(),
                 symbol: poll_symbol.clone(),
             },
             capture_list: vec![notify],
-            export_table: Some(interp.collector.export(&[notify])),
         };
         let notify_closure = interp.collector.allocate(Arc::new(notify_closure));
 
         let run_closure = |interp: &mut Interpreter| {
             interp.push_variable(notify_closure);
-            interp.push_call(START_DISPATCH.clone(), 0);
+            interp.push_call(start_dispatch(), 0);
             while interp.has_step() {
                 interp.step();
             }
@@ -299,7 +298,6 @@ mod tests {
                     .downcast_ref(),
                 Some(&False)
             );
-            assert!(Arc::weak_count(&notify_handle) > 0);
         }
         *notify_handle.0.lock().unwrap() = true;
         let result_list = run_closure(&mut interp);
