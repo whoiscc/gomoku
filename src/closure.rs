@@ -13,21 +13,19 @@ pub fn operate_new_closure(context: &mut dyn OperateContext) {
     let closure = Closure {
         dispatch: meta.dispatch.clone(),
         capture_list,
-        n_argument: meta.n_argument,
     };
     let closure = context.allocate(Arc::new(closure));
     context.push_result(closure);
 }
 
-// arguments: 1 Closure + n_argument varibles
-// result: 1 pack of variables (captured + arguments) + 1 Dispatch
+// arguments: 1 Closure + variable number of varibles
+// result: 1 pack of variables (captured) + 1 Dispatch
 pub fn operate_prepare_closure(context: &mut dyn OperateContext) {
     let closure = context.get_argument(0);
+    println!("{:?}", context.inspect(closure));
     let closure: &Closure = context.inspect(closure).as_ref().downcast_ref().unwrap();
-    let mut variable_list = closure.capture_list.clone();
-    variable_list.extend((1..=closure.n_argument).map(|i| context.get_argument(i)));
     let dispatch = closure.dispatch.clone();
-    let pack = List(variable_list);
+    let pack = List(closure.capture_list.clone());
     let pack = context.allocate(Arc::new(pack));
     context.push_result(pack);
     let dispatch = context.allocate(Arc::new(dispatch));
@@ -54,6 +52,16 @@ mod tests {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     struct I32(i32);
     impl LeafObject for I32 {}
+    impl I32 {
+        fn add_two(context: &mut dyn OperateContext) {
+            let int_a = context.get_argument(0);
+            let int_a: I32 = *context.inspect(int_a).as_ref().downcast_ref().unwrap();
+            let int_b = context.get_argument(1);
+            let int_b: I32 = *context.inspect(int_b).as_ref().downcast_ref().unwrap();
+            let int_c = context.allocate(Arc::new(I32(int_a.0 + int_b.0)));
+            context.push_result(int_c);
+        }
+    }
 
     fn push_literal<T: GeneralInterface + Clone>(literal: T) -> ByteCode {
         ByteCode::Operate(
@@ -83,7 +91,7 @@ mod tests {
     #[test]
     fn add_two_closure() {
         let mut interp = Interpreter::new();
-        let closure_symbol = || String::from("[closure]");
+        let closure_symbol = || String::from("(closure)");
         interp.load_module(Module {
             id: MAIN_MODULE.clone(),
             symbol_table: [(START_SYMBOL.clone(), 0), (closure_symbol(), 14)]
@@ -96,44 +104,29 @@ mod tests {
                         symbol: closure_symbol(),
                     },
                     n_capture: 1,
-                    n_argument: 1,
                 }),
                 push_literal(I32(2)),
                 // [add two]
                 ByteCode::Operate(2, Box::new(operate_new_closure)),
                 // 1 [add two]
                 push_literal(I32(1)),
-                // [dispatch] [variable pack] 1 [add two]
+                // [dispatch] [capture pack] 1 [add two]
                 ByteCode::Operate(2, Box::new(operate_prepare_closure)),
-                // [add two](1) 1 [add two]
-                ByteCode::Call(1),
+                // [add two](1) [add two]
+                ByteCode::Call(2),
                 ByteCode::AssertFloating(1),
                 assert_top(I32(3)),
                 // [add two]
-                ByteCode::Copy(3),
+                ByteCode::Copy(2),
                 push_literal(I32(40)),
                 ByteCode::Operate(2, Box::new(operate_prepare_closure)),
-                ByteCode::Call(1),
+                ByteCode::Call(2),
                 assert_top(I32(42)),
                 ByteCode::Return(0),
-                // [closure]
-                ByteCode::AssertFloating(1),
-                ByteCode::Operate(
-                    1,
-                    Box::new(|context| {
-                        let pack = context.get_argument(0);
-                        let pack: &List = context.inspect(pack).as_ref().downcast_ref().unwrap();
-                        let pack = &pack.0;
-                        assert_eq!(pack.len(), 2);
-                        let captured: &I32 =
-                            context.inspect(pack[0]).as_ref().downcast_ref().unwrap();
-                        let argument: &I32 =
-                            context.inspect(pack[1]).as_ref().downcast_ref().unwrap();
-                        let result = I32(captured.0 + argument.0);
-                        let result = context.allocate(Arc::new(result));
-                        context.push_result(result);
-                    }),
-                ),
+                // (closure)
+                ByteCode::Unpack,
+                ByteCode::AssertFloating(2),
+                ByteCode::Operate(2, Box::new(I32::add_two)),
                 ByteCode::Return(1),
             ],
         });

@@ -38,7 +38,6 @@ impl LeafObject for Dispatch {}
 pub struct ClosureMeta {
     pub dispatch: Dispatch,
     pub n_capture: u8,
-    pub n_argument: u8,
 }
 impl LeafObject for ClosureMeta {}
 
@@ -47,7 +46,6 @@ impl LeafObject for ClosureMeta {}
 pub struct Closure {
     pub dispatch: Dispatch,
     pub capture_list: Vec<Address>,
-    pub n_argument: u8,
 }
 impl EnumerateReference for Closure {
     fn enumerate_reference(&self, callback: &mut dyn FnMut(Address)) {
@@ -55,12 +53,4 @@ impl EnumerateReference for Closure {
             callback(*address);
         }
     }
-}
-
-/// The runtime object for a coroutine, turned from a closure object after invoking.
-/// Similar to Rust's `Future`.
-#[derive(Debug)]
-pub struct AsyncState {
-    pub dispatch: Dispatch,
-    pub variable_list: Vec<Address>,
 }

@@ -12,6 +12,7 @@ pub enum ByteCode {
     Return(u8),
     AssertFloating(u8), // assert number of floating variables
     PackFloating(u8),   // pack remaining variables into one single variable
+    Unpack,             // unpack List on stack top
 }
 
 pub type ModuleId = String;
@@ -182,6 +183,17 @@ impl Interpreter {
                 let list = self.collector.allocate(Arc::new(list));
                 self.variable_stack.drain(pack_offset..);
                 self.variable_stack.push(list);
+            }
+            ByteCode::Unpack => {
+                let pack = *self.variable_stack.last().unwrap();
+                let pack: &List = self
+                    .collector
+                    .inspect(pack)
+                    .as_ref()
+                    .downcast_ref()
+                    .unwrap();
+                self.variable_stack.pop();
+                self.variable_stack.extend(&pack.0);
             }
         }
     }
