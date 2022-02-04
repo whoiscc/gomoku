@@ -2,6 +2,7 @@ use crate::collector::{Address, Collector};
 use crate::objects::{Dispatch, False, List, True};
 use crate::{GeneralInterface, Handle, WeakHandle};
 use std::collections::HashMap;
+use std::mem::take;
 use std::sync::Arc;
 
 pub enum ByteCode {
@@ -34,7 +35,7 @@ pub struct Module {
 }
 
 pub struct Interpreter {
-    collector: Collector,
+    pub(crate) collector: Collector,
     module_table: HashMap<ModuleId, Module>,
     variable_stack: Vec<Address>,
     call_stack: Vec<Frame>,
@@ -65,7 +66,7 @@ impl Interpreter {
         self.module_table.insert(module.id.clone(), module);
     }
 
-    pub fn push_call(&mut self, dispatch: Dispatch) {
+    pub fn push_call(&mut self, dispatch: Dispatch, stack_size: usize) {
         let offset = *self
             .module_table
             .get(&dispatch.module_id)
@@ -75,12 +76,22 @@ impl Interpreter {
             .unwrap();
         self.call_stack.push(Frame {
             pointer: (dispatch.module_id, offset),
-            stack_size: self.variable_stack.len(),
+            stack_size,
         });
     }
 
     pub fn has_step(&self) -> bool {
         !self.call_stack.is_empty()
+    }
+
+    pub fn reset(&mut self) -> Vec<Address> {
+        assert!(!self.has_step(), "stack is not free");
+        take(&mut self.variable_stack)
+    }
+
+    pub fn push_variable(&mut self, address: Address) {
+        assert!(!self.has_step(), "stack is not free");
+        self.variable_stack.push(address);
     }
 
     pub fn garbage_collect(&mut self) {
@@ -162,8 +173,7 @@ impl Interpreter {
                 self.variable_stack.remove(self.variable_stack.len() - 1); // is it useful to save it?
                 let stack_size = self.variable_stack.len() - *n_argument as usize;
                 self.call_stack.last_mut().unwrap().stack_size = stack_size;
-                self.push_call(dispatch);
-                self.call_stack.last_mut().unwrap().stack_size = stack_size;
+                self.push_call(dispatch, stack_size);
             }
             ByteCode::Return(n_returned) => {
                 let n_returned = *n_returned;
@@ -186,7 +196,7 @@ impl Interpreter {
                 let n_destructed = *n_destructed;
                 let stack_size = self.call_stack.last().unwrap().stack_size;
                 assert!(self.variable_stack.len() - stack_size >= n_destructed as usize);
-                let pack_offset = self.variable_stack.len() - (stack_size + n_destructed as usize);
+                let pack_offset = stack_size + n_destructed as usize;
                 let list = List((&self.variable_stack[pack_offset..]).to_vec());
                 let list = self.collector.allocate(Arc::new(list));
                 self.variable_stack.drain(pack_offset..);
@@ -204,6 +214,14 @@ impl Interpreter {
                 self.variable_stack.extend(&pack.0);
             }
         }
+    }
+
+    #[cfg(test)]
+    pub fn stack_view(&self) -> Vec<&dyn GeneralInterface> {
+        self.variable_stack
+            .iter()
+            .map(|address| self.collector.inspect(*address))
+            .collect()
     }
 }
 
@@ -230,7 +248,7 @@ mod tests {
             program: vec![ByteCode::Return(0)],
             symbol_table: [(START_SYMBOL.clone(), 0)].into_iter().collect(),
         });
-        interp.push_call(START_DISPATCH.clone());
+        interp.push_call(START_DISPATCH.clone(), 0);
         assert!(interp.has_step());
         interp.step();
         assert!(!interp.has_step());
@@ -311,7 +329,7 @@ mod tests {
                 ByteCode::Return(0),
             ],
         });
-        interp.push_call(START_DISPATCH.clone());
+        interp.push_call(START_DISPATCH.clone(), 0);
         while interp.has_step() {
             interp.step();
         }
@@ -333,7 +351,7 @@ mod tests {
                 ByteCode::Return(0),
             ],
         });
-        interp.push_call(START_DISPATCH.clone());
+        interp.push_call(START_DISPATCH.clone(), 0);
         while interp.has_step() {
             interp.step();
         }
@@ -385,7 +403,7 @@ mod tests {
                 ByteCode::Return(0),
             ],
         });
-        interp.push_call(START_DISPATCH.clone());
+        interp.push_call(START_DISPATCH.clone(), 0);
         while interp.has_step() {
             interp.step();
         }
@@ -457,7 +475,7 @@ mod tests {
                 ByteCode::Return(1),
             ],
         });
-        interp.push_call(START_DISPATCH.clone());
+        interp.push_call(START_DISPATCH.clone(), 0);
         while interp.has_step() {
             interp.step();
         }

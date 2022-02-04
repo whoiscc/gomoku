@@ -39,6 +39,24 @@ impl Closure {
         let poll_result = context.get_argument(1);
         let poll_result = context.inspect(poll_result).as_ref();
         if poll_result.is::<Pending>() {
+            let capture_list = context.get_argument(2);
+            let capture_list: &List = context
+                .inspect(capture_list)
+                .as_ref()
+                .downcast_ref()
+                .unwrap();
+            let capture_list = capture_list.0.clone();
+            let export_table = context.export(&capture_list);
+
+            let closure = context.get_argument(0);
+            let closure: &mut Closure = context
+                .inspect_mut(closure)
+                .as_mut()
+                .downcast_mut()
+                .unwrap();
+            closure.capture_list = capture_list;
+            closure.export_table = Some(export_table);
+
             let result = context.allocate(Arc::new(False)); // TODO reuse public shared constant
             context.push_result(result);
             return;
@@ -47,24 +65,6 @@ impl Closure {
         let poll_result: &Ready = poll_result.downcast_ref().unwrap();
         let address = poll_result.0;
         context.set_argument(1, address);
-
-        let capture_list = context.get_argument(2);
-        let capture_list: &List = context
-            .inspect(capture_list)
-            .as_ref()
-            .downcast_ref()
-            .unwrap();
-        let capture_list = capture_list.0.clone();
-        let export_table = context.export(&capture_list);
-
-        let closure = context.get_argument(0);
-        let closure: &mut Closure = context
-            .inspect_mut(closure)
-            .as_mut()
-            .downcast_mut()
-            .unwrap();
-        closure.capture_list = capture_list;
-        closure.export_table = Some(export_table);
 
         let result = context.allocate(Arc::new(True)); // TODO
         context.push_result(result);
@@ -169,10 +169,58 @@ mod tests {
                 ByteCode::Return(1),
             ],
         });
-        interp.push_call(START_DISPATCH.clone());
+        interp.push_call(START_DISPATCH.clone(), 0);
         while interp.has_step() {
             interp.step();
         }
+    }
+
+    #[test]
+    fn always_ready() {
+        let mut interp = Interpreter::new();
+        let poll_symbol = String::from("(poll)");
+        interp.load_module(Module {
+            id: MAIN_MODULE.clone(),
+            symbol_table: [(START_SYMBOL.clone(), 0), (poll_symbol.clone(), 8)]
+                .into_iter()
+                .collect(),
+            program: vec![
+                push_literal(ClosureMeta {
+                    dispatch: Dispatch {
+                        module_id: MAIN_MODULE.clone(),
+                        symbol: poll_symbol.clone(),
+                    },
+                    n_capture: 0,
+                }),
+                ByteCode::Operate(1, Box::new(Closure::operate_new)),
+                ByteCode::Operate(1, Box::new(Closure::operate_apply)),
+                ByteCode::Call(1),
+                ByteCode::PackFloating(1),
+                ByteCode::Operate(3, Box::new(Closure::operate_poll)),
+                ByteCode::Copy(3),
+                ByteCode::Return(2),
+                // (poll)
+                ByteCode::Unpack,
+                ByteCode::AssertFloating(0),
+                push_literal(List(Vec::new())),
+                ByteCode::Operate(1, Box::new(Ready::operate_new)),
+                ByteCode::Return(1),
+            ],
+        });
+        interp.push_call(START_DISPATCH.clone(), 0);
+        while interp.has_step() {
+            interp.step();
+        }
+        let result_list = interp.reset();
+        assert_eq!(result_list.len(), 2);
+        assert_eq!(
+            interp
+                .collector
+                .inspect(result_list[0])
+                .as_ref()
+                .downcast_ref(),
+            Some(&True)
+        );
     }
 
     #[derive(Debug)]
@@ -192,5 +240,76 @@ mod tests {
             let result = context.allocate(result);
             context.push_result(result);
         }
+    }
+
+    #[test]
+    fn ready_on_notify() {
+        let mut interp = Interpreter::new();
+        let poll_symbol = String::from("(poll)");
+        interp.load_module(Module {
+            id: MAIN_MODULE.clone(),
+            symbol_table: [(START_SYMBOL.clone(), 0), (poll_symbol.clone(), 7)]
+                .into_iter()
+                .collect(),
+            program: vec![
+                // async closure will be pushed externally
+                ByteCode::AssertFloating(1),
+                ByteCode::Operate(1, Box::new(Closure::operate_apply)),
+                ByteCode::Call(1),
+                ByteCode::PackFloating(1),
+                ByteCode::Operate(3, Box::new(Closure::operate_poll)),
+                ByteCode::Copy(3),
+                ByteCode::Return(2),
+                // (poll)
+                ByteCode::Unpack,
+                ByteCode::AssertFloating(1),
+                ByteCode::Operate(1, Box::new(Notify::operate_poll)),
+                // we don't actually need to capture Notify again on Ready, but anyway
+                ByteCode::Copy(2),
+                ByteCode::Return(2),
+            ],
+        });
+        let notify_handle = Arc::new(Notify(Mutex::new(false)));
+        let notify = interp.collector.allocate(notify_handle.clone());
+        let notify_closure = Closure {
+            dispatch: Dispatch {
+                module_id: MAIN_MODULE.clone(),
+                symbol: poll_symbol.clone(),
+            },
+            capture_list: vec![notify],
+            export_table: Some(interp.collector.export(&[notify])),
+        };
+        let notify_closure = interp.collector.allocate(Arc::new(notify_closure));
+
+        let run_closure = |interp: &mut Interpreter| {
+            interp.push_variable(notify_closure);
+            interp.push_call(START_DISPATCH.clone(), 0);
+            while interp.has_step() {
+                interp.step();
+            }
+            interp.reset()
+        };
+        for _ in 0..3 {
+            let result_list = run_closure(&mut interp);
+            assert_eq!(
+                interp
+                    .collector
+                    .inspect(result_list[0])
+                    .as_ref()
+                    .downcast_ref(),
+                Some(&False)
+            );
+            assert!(Arc::weak_count(&notify_handle) > 0);
+        }
+        *notify_handle.0.lock().unwrap() = true;
+        let result_list = run_closure(&mut interp);
+        assert_eq!(
+            interp
+                .collector
+                .inspect(result_list[0])
+                .as_ref()
+                .downcast_ref(),
+            Some(&True)
+        );
     }
 }

@@ -1,7 +1,8 @@
 use crate::collector::{Address, EnumerateReference};
-use crate::interpreter::ModuleId;
+use crate::interpreter::{ModuleId, OperateContext};
 use crate::WeakHandle;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub trait LeafObject {}
 impl<T: LeafObject> EnumerateReference for T {
@@ -16,7 +17,7 @@ impl LeafObject for True {}
 pub struct False;
 impl LeafObject for False {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct List(pub Vec<Address>);
 impl EnumerateReference for List {
     fn enumerate_reference(&self, callback: &mut dyn FnMut(Address)) {
@@ -43,7 +44,7 @@ pub struct ClosureMeta {
 impl LeafObject for ClosureMeta {}
 
 /// The runtime closure object, before first invoking
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Closure {
     pub dispatch: Dispatch,
     pub capture_list: Vec<Address>,
@@ -66,5 +67,14 @@ pub struct Ready(pub Address);
 impl EnumerateReference for Ready {
     fn enumerate_reference(&self, callback: &mut dyn FnMut(Address)) {
         callback(self.0);
+    }
+}
+impl Ready {
+    // arguments: 1 variable
+    // result: 1 Ready wrapping argument
+    pub fn operate_new(context: &mut dyn OperateContext) {
+        let ready = Self(context.get_argument(0));
+        let ready = context.allocate(Arc::new(ready));
+        context.push_result(ready);
     }
 }
