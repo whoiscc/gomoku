@@ -2,36 +2,37 @@ use crate::interpreter::OperateContext;
 use crate::objects::{Closure, ClosureMeta, List};
 use std::sync::Arc;
 
-// arguments: 1 ClosureMeta + n_capture varibles
-// result: 1 Closure
-pub fn operate_new_closure(context: &mut dyn OperateContext) {
-    let meta = context.get_argument(0);
-    let meta: &ClosureMeta = context.inspect(meta).as_ref().downcast_ref().unwrap();
-    let capture_list = (1..=meta.n_capture)
-        .map(|i| context.get_argument(i))
-        .collect();
-    let closure = Closure {
-        dispatch: meta.dispatch.clone(),
-        capture_list,
-    };
-    let closure = context.allocate(Arc::new(closure));
-    context.push_result(closure);
-}
+impl Closure {
+    // arguments: 1 ClosureMeta + n_capture varibles
+    // result: 1 Closure
+    pub fn operate_new(context: &mut dyn OperateContext) {
+        let meta = context.get_argument(0);
+        let meta: &ClosureMeta = context.inspect(meta).as_ref().downcast_ref().unwrap();
+        let capture_list = (1..=meta.n_capture)
+            .map(|i| context.get_argument(i))
+            .collect();
+        let closure = Closure {
+            dispatch: meta.dispatch.clone(),
+            capture_list,
+        };
+        let closure = context.allocate(Arc::new(closure));
+        context.push_result(closure);
+    }
 
-// arguments: 1 Closure + variable number of varibles
-// result: 1 pack of variables (captured) + 1 Dispatch
-pub fn operate_prepare_closure(context: &mut dyn OperateContext) {
-    let closure = context.get_argument(0);
-    println!("{:?}", context.inspect(closure));
-    let closure: &Closure = context.inspect(closure).as_ref().downcast_ref().unwrap();
-    let dispatch = closure.dispatch.clone();
-    let pack = List(closure.capture_list.clone());
-    let pack = context.allocate(Arc::new(pack));
-    context.push_result(pack);
-    let dispatch = context.allocate(Arc::new(dispatch));
-    context.push_result(dispatch);
+    // arguments: 1 Closure + variable number of varibles
+    // result: 1 pack of variables (captured) + 1 Dispatch
+    pub fn operate_apply(context: &mut dyn OperateContext) {
+        let closure = context.get_argument(0);
+        println!("{:?}", context.inspect(closure));
+        let closure: &Closure = context.inspect(closure).as_ref().downcast_ref().unwrap();
+        let dispatch = closure.dispatch.clone();
+        let pack = List(closure.capture_list.clone());
+        let pack = context.allocate(Arc::new(pack));
+        context.push_result(pack);
+        let dispatch = context.allocate(Arc::new(dispatch));
+        context.push_result(dispatch);
+    }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -53,7 +54,7 @@ mod tests {
     struct I32(i32);
     impl LeafObject for I32 {}
     impl I32 {
-        fn add_two(context: &mut dyn OperateContext) {
+        fn operate_add_two(context: &mut dyn OperateContext) {
             let int_a = context.get_argument(0);
             let int_a: I32 = *context.inspect(int_a).as_ref().downcast_ref().unwrap();
             let int_b = context.get_argument(1);
@@ -107,11 +108,11 @@ mod tests {
                 }),
                 push_literal(I32(2)),
                 // [add two]
-                ByteCode::Operate(2, Box::new(operate_new_closure)),
+                ByteCode::Operate(2, Box::new(Closure::operate_new)),
                 // 1 [add two]
                 push_literal(I32(1)),
                 // [dispatch] [capture pack] 1 [add two]
-                ByteCode::Operate(2, Box::new(operate_prepare_closure)),
+                ByteCode::Operate(2, Box::new(Closure::operate_apply)),
                 // [add two](1) [add two]
                 ByteCode::Call(2),
                 ByteCode::AssertFloating(1),
@@ -119,14 +120,14 @@ mod tests {
                 // [add two]
                 ByteCode::Copy(2),
                 push_literal(I32(40)),
-                ByteCode::Operate(2, Box::new(operate_prepare_closure)),
+                ByteCode::Operate(2, Box::new(Closure::operate_apply)),
                 ByteCode::Call(2),
                 assert_top(I32(42)),
                 ByteCode::Return(0),
                 // (closure)
                 ByteCode::Unpack,
                 ByteCode::AssertFloating(2),
-                ByteCode::Operate(2, Box::new(I32::add_two)),
+                ByteCode::Operate(2, Box::new(I32::operate_add_two)),
                 ByteCode::Return(1),
             ],
         });

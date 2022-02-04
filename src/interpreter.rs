@@ -256,14 +256,37 @@ mod tests {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     struct I32(i32);
     impl LeafObject for I32 {}
-
-    fn operate_add_two_i32(context: &mut dyn OperateContext) {
-        let int_a = context.get_argument(0);
-        let int_a: I32 = *context.inspect(int_a).as_ref().downcast_ref().unwrap();
-        let int_b = context.get_argument(1);
-        let int_b: I32 = *context.inspect(int_b).as_ref().downcast_ref().unwrap();
-        let int_c = context.allocate(Arc::new(I32(int_a.0 + int_b.0)));
-        context.push_result(int_c);
+    impl I32 {
+        fn operate_add_two(context: &mut dyn OperateContext) {
+            let int_a = context.get_argument(0);
+            let int_a: I32 = *context.inspect(int_a).as_ref().downcast_ref().unwrap();
+            let int_b = context.get_argument(1);
+            let int_b: I32 = *context.inspect(int_b).as_ref().downcast_ref().unwrap();
+            let int_c = context.allocate(Arc::new(I32(int_a.0 + int_b.0)));
+            context.push_result(int_c);
+        }
+        fn operate_add_in_place(context: &mut dyn OperateContext) {
+            let int_a = context.get_argument(0);
+            let int_a: I32 = *context.inspect(int_a).as_ref().downcast_ref().unwrap();
+            let int_b = context.get_argument(1);
+            let int_b: I32 = *context.inspect(int_b).as_ref().downcast_ref().unwrap();
+            let int_c = I32(int_a.0 + int_b.0);
+            let int_b = context.get_argument(1);
+            *context.inspect_mut(int_b).as_mut().downcast_mut().unwrap() = int_c;
+        }
+        fn operate_eq_two(context: &mut dyn OperateContext) {
+            let int_a = context.get_argument(0);
+            let int_a: I32 = *context.inspect(int_a).as_ref().downcast_ref().unwrap();
+            let int_b = context.get_argument(1);
+            let int_b: I32 = *context.inspect(int_b).as_ref().downcast_ref().unwrap();
+            let result: Handle = if int_a == int_b {
+                Arc::new(True)
+            } else {
+                Arc::new(False)
+            };
+            let result = context.allocate(result);
+            context.push_result(result);
+        }
     }
 
     #[test]
@@ -275,7 +298,7 @@ mod tests {
             program: vec![
                 push_literal(I32(20)),
                 push_literal(I32(22)),
-                ByteCode::Operate(2, Box::new(operate_add_two_i32)),
+                ByteCode::Operate(2, Box::new(I32::operate_add_two)),
                 assert_top(I32(42)),
                 ByteCode::Return(0),
             ],
@@ -284,16 +307,6 @@ mod tests {
         while interp.has_step() {
             interp.step();
         }
-    }
-
-    fn operate_add_i32_in_place(context: &mut dyn OperateContext) {
-        let int_a = context.get_argument(0);
-        let int_a: I32 = *context.inspect(int_a).as_ref().downcast_ref().unwrap();
-        let int_b = context.get_argument(1);
-        let int_b: I32 = *context.inspect(int_b).as_ref().downcast_ref().unwrap();
-        let int_c = I32(int_a.0 + int_b.0);
-        let int_b = context.get_argument(1);
-        *context.inspect_mut(int_b).as_mut().downcast_mut().unwrap() = int_c;
     }
 
     #[test]
@@ -305,7 +318,7 @@ mod tests {
             program: vec![
                 push_literal(I32(20)),
                 push_literal(I32(22)),
-                ByteCode::Operate(2, Box::new(operate_add_i32_in_place)),
+                ByteCode::Operate(2, Box::new(I32::operate_add_in_place)),
                 assert_top(I32(42)),
                 ByteCode::Copy(2),
                 assert_top(I32(20)),
@@ -316,20 +329,6 @@ mod tests {
         while interp.has_step() {
             interp.step();
         }
-    }
-
-    fn operate_eq_two_i32(context: &mut dyn OperateContext) {
-        let int_a = context.get_argument(0);
-        let int_a: I32 = *context.inspect(int_a).as_ref().downcast_ref().unwrap();
-        let int_b = context.get_argument(1);
-        let int_b: I32 = *context.inspect(int_b).as_ref().downcast_ref().unwrap();
-        let result: Handle = if int_a == int_b {
-            Arc::new(True)
-        } else {
-            Arc::new(False)
-        };
-        let result = context.allocate(result);
-        context.push_result(result);
     }
 
     #[test]
@@ -353,7 +352,7 @@ mod tests {
                 // n i _ i 1 a b
                 ByteCode::Copy(8),
                 // ? n i _ i 1 a b
-                ByteCode::Operate(2, Box::new(operate_eq_two_i32)),
+                ByteCode::Operate(2, Box::new(I32::operate_eq_two)),
                 // goto 'end
                 ByteCode::Jump(8),
                 // a ? n i _ i 1 a b
@@ -361,13 +360,13 @@ mod tests {
                 // b a ? n i _ i 1
                 ByteCode::Copy(9),
                 // a' a ? n i _ i 1
-                ByteCode::Operate(2, Box::new(operate_add_i32_in_place)),
+                ByteCode::Operate(2, Box::new(I32::operate_add_in_place)),
                 // 1 a' a ? n i
                 ByteCode::Copy(8),
                 // i 1 a' a ? n
                 ByteCode::Copy(6),
                 // i' 1 a' a ? n
-                ByteCode::Operate(2, Box::new(operate_add_i32_in_place)),
+                ByteCode::Operate(2, Box::new(I32::operate_add_in_place)),
                 // T i' 1 a' b ? n
                 push_literal(True),
                 // goto 'loop
@@ -411,7 +410,7 @@ mod tests {
                 // 1 n
                 push_literal(I32(1)),
                 // ? 1 n
-                ByteCode::Operate(2, Box::new(operate_eq_two_i32)),
+                ByteCode::Operate(2, Box::new(I32::operate_eq_two)),
                 // goto '1
                 ByteCode::Jump(19),
                 // n ? 1
@@ -419,7 +418,7 @@ mod tests {
                 // 2 n
                 push_literal(I32(2)),
                 // ? 2 n
-                ByteCode::Operate(2, Box::new(operate_eq_two_i32)),
+                ByteCode::Operate(2, Box::new(I32::operate_eq_two)),
                 // goto '2
                 ByteCode::Jump(15),
                 // -1 ? 2 n
@@ -427,7 +426,7 @@ mod tests {
                 // n -1
                 ByteCode::Copy(4),
                 // n' n
-                ByteCode::Operate(2, Box::new(operate_add_two_i32)),
+                ByteCode::Operate(2, Box::new(I32::operate_add_two)),
                 push_literal(fib_dispatch.clone()),
                 ByteCode::Call(1),
                 ByteCode::AssertFloating(1),
@@ -436,14 +435,14 @@ mod tests {
                 // n -2 fib(n')
                 ByteCode::Copy(3),
                 // n'' n -2 fib(n')
-                ByteCode::Operate(2, Box::new(operate_add_two_i32)),
+                ByteCode::Operate(2, Box::new(I32::operate_add_two)),
                 push_literal(fib_dispatch.clone()),
                 // fib(n'') n -2 fib(n')
                 ByteCode::Call(1),
                 ByteCode::AssertFloating(1),
                 // fib(n') fib(n'')
                 ByteCode::Copy(4),
-                ByteCode::Operate(2, Box::new(operate_add_two_i32)),
+                ByteCode::Operate(2, Box::new(I32::operate_add_two)),
                 ByteCode::Return(1),
                 // '1 '2
                 push_literal(I32(1)),
