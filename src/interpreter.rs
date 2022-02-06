@@ -1,8 +1,8 @@
 use crate::collector::{Address, Collector};
 use crate::objects::{Dispatch, False, List, True};
-use crate::{GeneralInterface, Handle, WeakHandle};
+use crate::{GeneralInterface, Handle};
 use std::collections::HashMap;
-use std::mem::take;
+use std::mem::{replace, take};
 use std::sync::Arc;
 
 pub enum ByteCode {
@@ -22,7 +22,6 @@ pub trait OperateContext {
     fn inspect(&self, address: Address) -> &dyn GeneralInterface;
     fn inspect_mut(&mut self, address: Address) -> &mut dyn GeneralInterface;
     fn allocate(&mut self, handle: Handle) -> Address;
-    fn export(&self, address_list: &[Address]) -> HashMap<Address, WeakHandle>;
     fn get_argument(&self, index: u8) -> Address;
     fn set_argument(&mut self, index: u8, address: Address);
     fn push_result(&mut self, address: Address);
@@ -94,10 +93,10 @@ impl Interpreter {
         self.variable_stack.push(address);
     }
 
-    pub fn garbage_collect(&mut self, external_list: &[Address]) {
+    pub fn garbage_collect(&mut self, external_list: &[Address]) -> HashMap<Address, Handle> {
         let mut root_list = self.variable_stack.clone();
         root_list.extend_from_slice(external_list);
-        self.collector.copy_collect(&root_list);
+        self.collector.copy_collect(&root_list)
     }
 }
 
@@ -117,9 +116,6 @@ impl<'i> OperateContext for Context<'i> {
     fn allocate(&mut self, handle: Handle) -> Address {
         self.collector.allocate(handle)
     }
-    fn export(&self, address_list: &[Address]) -> HashMap<Address, WeakHandle> {
-        self.collector.export(address_list)
-    }
     fn get_argument(&self, index: u8) -> Address {
         self.variable_stack[self.argument_offset + index as usize]
     }
@@ -129,6 +125,11 @@ impl<'i> OperateContext for Context<'i> {
     fn push_result(&mut self, address: Address) {
         self.variable_stack.push(address);
     }
+}
+
+pub trait StepContext {
+    fn spawn(&mut self, address: Address);
+    fn waker(&self) -> Box<dyn FnOnce()>; // wake current stepping top-level task
 }
 
 impl Interpreter {

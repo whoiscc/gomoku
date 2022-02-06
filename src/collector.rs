@@ -1,5 +1,6 @@
-use crate::{GeneralInterface, Handle, WeakHandle};
+use crate::{GeneralInterface, Handle};
 use std::collections::HashMap;
+use std::mem::replace;
 use std::sync::Arc;
 use std::thread::{current, ThreadId};
 
@@ -30,28 +31,19 @@ impl Collector {
         address
     }
 
-    pub fn import(&mut self, address: Address, weak_handle: WeakHandle) {
-        if let Some(exist) = self.storage.insert(address, weak_handle.upgrade().unwrap()) {
-            assert!(
-                Arc::downgrade(&exist).ptr_eq(&weak_handle),
-                "address corruption"
-            );
-        }
-    }
-
-    pub fn export(&self, address_list: &[Address]) -> HashMap<Address, WeakHandle> {
+    pub fn copy_collect(&mut self, address_list: &[Address]) -> HashMap<Address, Handle> {
         let mut gray_stack = address_list.to_vec();
-        let mut export_table = HashMap::new();
+        let mut storage = HashMap::new();
         while let Some(address) = gray_stack.pop() {
             let handle = self.storage.get(&address).unwrap();
-            export_table.insert(address, Arc::downgrade(handle));
+            storage.insert(address, handle.clone());
             handle.enumerate_reference(&mut |address| {
-                if !export_table.contains_key(&address) {
+                if !storage.contains_key(&address) {
                     gray_stack.push(address);
                 }
             });
         }
-        export_table
+        replace(&mut self.storage, storage)
     }
 
     pub fn inspect(&self, address: Address) -> &dyn GeneralInterface {
@@ -64,14 +56,6 @@ impl Collector {
 
     pub fn count(&self) -> usize {
         self.storage.len()
-    }
-
-    pub fn copy_collect(&mut self, root_list: &[Address]) {
-        self.storage = self
-            .export(root_list)
-            .into_iter()
-            .map(|(address, handle)| (address, handle.upgrade().unwrap()))
-            .collect();
     }
 }
 
