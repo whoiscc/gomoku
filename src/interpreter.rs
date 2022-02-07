@@ -1,9 +1,8 @@
-use crate::collector::{Address, Collector};
+use crate::collector::{Address, Owned};
 use crate::objects::{Dispatch, False, List, True};
-use crate::{GeneralInterface, Handle};
+use crate::runner::{CollectorInterface, Inspect};
 use std::collections::HashMap;
-use std::mem::{replace, take};
-use std::sync::Arc;
+use std::mem::take;
 
 pub enum ByteCode {
     Copy(u8),
@@ -18,10 +17,7 @@ pub enum ByteCode {
 
 pub type ModuleId = String;
 
-pub trait OperateContext {
-    fn inspect(&self, address: Address) -> &dyn GeneralInterface;
-    fn inspect_mut(&mut self, address: Address) -> &mut dyn GeneralInterface;
-    fn allocate(&mut self, handle: Handle) -> Address;
+pub trait OperateContext: CollectorInterface {
     fn get_argument(&self, index: u8) -> Address;
     fn set_argument(&mut self, index: u8, address: Address);
     fn push_result(&mut self, address: Address);
@@ -33,17 +29,11 @@ pub struct Module {
     pub symbol_table: HashMap<String, usize>,
 }
 
+#[derive(Default)]
 pub struct Interpreter {
-    pub(crate) collector: Collector,
     module_table: HashMap<ModuleId, Module>,
     variable_stack: Vec<Address>,
     call_stack: Vec<Frame>,
-}
-
-impl Default for Interpreter {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 struct Frame {
@@ -53,12 +43,7 @@ struct Frame {
 
 impl Interpreter {
     pub fn new() -> Self {
-        Self {
-            collector: Collector::new(),
-            module_table: HashMap::new(),
-            variable_stack: Vec::new(),
-            call_stack: Vec::new(),
-        }
+        Self::default()
     }
 
     pub fn load_module(&mut self, module: Module) {
@@ -92,30 +77,27 @@ impl Interpreter {
         assert!(!self.has_step(), "stack is not free");
         self.variable_stack.push(address);
     }
-
-    pub fn garbage_collect(&mut self, external_list: &[Address]) -> HashMap<Address, Handle> {
-        let mut root_list = self.variable_stack.clone();
-        root_list.extend_from_slice(external_list);
-        self.collector.copy_collect(&root_list)
-    }
 }
 
-struct Context<'i> {
-    collector: &'i mut Collector,
+struct OperateView<'i> {
+    collector: &'i mut dyn CollectorInterface,
     variable_stack: &'i mut Vec<Address>,
     argument_offset: usize,
 }
 
-impl<'i> OperateContext for Context<'i> {
-    fn inspect(&self, address: Address) -> &dyn GeneralInterface {
+impl<'i> CollectorInterface for OperateView<'i> {
+    fn allocate(&mut self, owned: Owned) -> Address {
+        self.collector.allocate(owned)
+    }
+    fn inspect(&self, address: Address) -> Inspect {
         self.collector.inspect(address)
     }
-    fn inspect_mut(&mut self, address: Address) -> &mut dyn GeneralInterface {
-        self.collector.inspect_mut(address)
+    fn replace(&mut self, address: Address, owned: Owned) -> Owned {
+        self.collector.replace(address, owned)
     }
-    fn allocate(&mut self, handle: Handle) -> Address {
-        self.collector.allocate(handle)
-    }
+}
+
+impl<'i> OperateContext for OperateView<'i> {
     fn get_argument(&self, index: u8) -> Address {
         self.variable_stack[self.argument_offset + index as usize]
     }
@@ -133,7 +115,7 @@ pub trait StepContext {
 }
 
 impl Interpreter {
-    pub fn step(&mut self) {
+    pub fn step(&mut self, collector: &mut dyn CollectorInterface) {
         let pointer = &mut self.call_stack.last_mut().unwrap().pointer;
         let instruction = &self.module_table.get(&pointer.0).unwrap().program[pointer.1];
         pointer.1 += 1;
@@ -144,34 +126,30 @@ impl Interpreter {
             }
             ByteCode::Operate(n_argument, op) => {
                 let argument_offset = self.variable_stack.len() - *n_argument as usize;
-                op(&mut Context {
-                    collector: &mut self.collector,
+                op(&mut OperateView {
+                    collector,
                     variable_stack: &mut self.variable_stack,
                     argument_offset,
                 });
             }
             ByteCode::Jump(offset) => {
+                let offset = *offset;
                 let top = *self.variable_stack.last().unwrap();
-                let top = self.collector.inspect(top);
-                if top.as_ref().is::<True>() {
+                let top = collector.inspect(top);
+                if (*top).as_ref().is::<True>() {
                     let pointer = &mut self.call_stack.last_mut().unwrap().pointer;
-                    if *offset > 0 {
-                        pointer.1 += *offset as usize;
+                    if offset > 0 {
+                        pointer.1 += offset as usize;
                     } else {
-                        pointer.1 -= (-*offset) as usize;
+                        pointer.1 -= (-offset) as usize;
                     }
-                } else if !top.as_ref().is::<False>() {
-                    panic!("jump on non-boolean variable {:?}", top);
+                } else if !(*top).as_ref().is::<False>() {
+                    panic!("jump on non-boolean variable {:?}", &**top);
                 }
             }
             ByteCode::Call(n_argument) => {
-                let dispatch = *self.variable_stack.last().unwrap();
-                let dispatch: &Dispatch = self
-                    .collector
-                    .inspect(dispatch)
-                    .as_ref()
-                    .downcast_ref()
-                    .unwrap();
+                let dispatch = collector.inspect(*self.variable_stack.last().unwrap());
+                let dispatch: &Dispatch = (*dispatch).as_ref().downcast_ref().unwrap();
                 let dispatch = dispatch.clone();
                 self.variable_stack.remove(self.variable_stack.len() - 1); // is it useful to save it?
                 let stack_size = self.variable_stack.len() - *n_argument as usize;
@@ -201,18 +179,13 @@ impl Interpreter {
                 assert!(self.variable_stack.len() - stack_size >= n_destructed as usize);
                 let pack_offset = stack_size + n_destructed as usize;
                 let list = List((&self.variable_stack[pack_offset..]).to_vec());
-                let list = self.collector.allocate(Arc::new(list));
+                let list = collector.allocate(list.into());
                 self.variable_stack.drain(pack_offset..);
                 self.variable_stack.push(list);
             }
             ByteCode::Unpack => {
-                let pack = *self.variable_stack.last().unwrap();
-                let pack: &List = self
-                    .collector
-                    .inspect(pack)
-                    .as_ref()
-                    .downcast_ref()
-                    .unwrap();
+                let pack = collector.inspect(*self.variable_stack.last().unwrap());
+                let pack: &List = (*pack).as_ref().downcast_ref().unwrap();
                 self.variable_stack.pop();
                 self.variable_stack.extend(&pack.0);
             }
@@ -220,14 +193,15 @@ impl Interpreter {
     }
 
     #[cfg(test)]
-    pub fn stack_view(&self) -> Vec<&dyn GeneralInterface> {
+    pub fn stack_view(&mut self, collector: &dyn CollectorInterface) -> Vec<Inspect> {
         self.variable_stack
             .iter()
-            .map(|address| self.collector.inspect(*address))
+            .map(|address| collector.inspect(*address))
             .collect()
     }
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -487,3 +461,4 @@ mod tests {
         }
     }
 }
+*/

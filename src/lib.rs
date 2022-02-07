@@ -8,7 +8,6 @@ pub mod runner;
 use crate::collector::EnumerateReference;
 use std::any::Any;
 use std::fmt::Debug;
-use std::sync::Arc;
 
 pub trait GeneralInterface: Send + Sync + Debug + EnumerateReference + Any {
     fn as_ref(&self) -> &dyn Any;
@@ -26,4 +25,4 @@ where
     }
 }
 
-pub type Handle = Arc<dyn GeneralInterface>;
+pub type TaskId = u32;

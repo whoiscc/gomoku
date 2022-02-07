@@ -1,136 +1,157 @@
-use crate::{GeneralInterface, Handle};
-use std::collections::HashMap;
-use std::mem::replace;
-use std::sync::Arc;
-use std::thread::{current, ThreadId};
+use crate::{GeneralInterface, TaskId};
+use std::collections::{HashMap, HashSet};
+use std::mem::{replace, take};
+use std::ops::{Deref, DerefMut};
+use std::sync::{Arc, Mutex, RwLock};
 
-pub type Address = (ThreadId, u64);
+pub type Address = (TaskId, u32);
 
 pub trait EnumerateReference {
     fn enumerate_reference(&self, callback: &mut dyn FnMut(Address));
 }
 
-#[derive(Debug)]
+type Shared = Arc<dyn GeneralInterface>;
+
+#[derive(Default)]
 pub struct Collector {
-    storage: HashMap<Address, Handle>,
-    allocate_number: u64,
+    heap_table: RwLock<HashMap<TaskId, Mutex<Heap>>>,
+    limbo_table: RwLock<HashMap<Address, Shared>>,
+    witness_set: Mutex<HashSet<TaskId>>,
+    collect_table: RwLock<HashMap<Address, Shared>>,
+}
+
+#[derive(Default)]
+struct Heap {
+    storage: HashMap<Address, Shared>,
+    allocate_number: u32,
 }
 
 impl Collector {
     pub fn new() -> Self {
-        Self {
-            storage: HashMap::new(),
-            allocate_number: 0,
-        }
+        Self::default()
     }
 
-    pub fn allocate(&mut self, handle: Handle) -> Address {
-        self.allocate_number += 1;
-        let address = (current().id(), self.allocate_number);
-        self.storage.insert(address, handle);
+    pub fn spawn(&self, id: TaskId) {
+        self.heap_table
+            .write()
+            .unwrap()
+            .insert(id, Default::default());
+    }
+}
+
+pub struct Owned(Shared);
+impl From<Box<dyn GeneralInterface>> for Owned {
+    fn from(value: Box<dyn GeneralInterface>) -> Self {
+        Self(value.into())
+    }
+}
+impl<T: GeneralInterface> From<T> for Owned {
+    fn from(value: T) -> Self {
+        Self(Arc::new(value))
+    }
+}
+impl Deref for Owned {
+    type Target = dyn GeneralInterface;
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
+impl DerefMut for Owned {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        Arc::get_mut(&mut self.0).unwrap()
+    }
+}
+
+impl Collector {
+    pub fn allocate(&self, id: TaskId, owned: Owned) -> Address {
+        let heap_table = self.heap_table.read().unwrap();
+        let mut heap = heap_table.get(&id).unwrap().lock().unwrap();
+        heap.allocate_number += 1;
+        let address = (id, heap.allocate_number);
+        heap.storage.insert(address, owned.0);
         address
     }
 
-    pub fn copy_collect(&mut self, address_list: &[Address]) -> HashMap<Address, Handle> {
-        let mut gray_stack = address_list.to_vec();
+    pub fn inspect(
+        &self,
+        id: TaskId,
+        address: Address,
+    ) -> impl Deref<Target = dyn GeneralInterface> {
+        let heap_table = self.heap_table.read().unwrap();
+        let mut heap = heap_table.get(&id).unwrap().lock().unwrap();
+        self.inspect_internal(address, &*heap_table, &mut *heap)
+    }
+
+    fn inspect_internal(
+        &self,
+        address: Address,
+        heap_table: &HashMap<TaskId, Mutex<Heap>>,
+        heap: &mut Heap,
+    ) -> Shared {
+        if let Some(shared) = heap.storage.get(&address) {
+            shared.clone()
+        } else {
+            let shared = (|| {
+                let limbo_table = self.limbo_table.read().unwrap();
+                let collect_table = self.collect_table.read().unwrap();
+                if let Some(remote_heap) = heap_table.get(&address.0) {
+                    if let Some(shared) = remote_heap.lock().unwrap().storage.get(&address) {
+                        return shared.clone();
+                    }
+                }
+                if let Some(shared) = collect_table.get(&address) {
+                    return shared.clone();
+                }
+                limbo_table.get(&address).unwrap().clone()
+            })();
+            heap.storage.insert(address, shared.clone());
+            shared
+        }
+    }
+
+    pub fn replace_owned(&self, address: Address, owned: Owned) -> Owned {
+        let heap_table = self.heap_table.read().unwrap();
+        let mut heap = heap_table.get(&address.0).unwrap().lock().unwrap();
+        let replaced = heap.storage.insert(address, owned.0).unwrap();
+        assert_eq!(Arc::strong_count(&replaced), 1);
+        Owned(replaced)
+    }
+
+    pub fn copy_collect(&self, id: TaskId, root_list: &[Address]) {
+        let mut gray_list = root_list.to_vec();
         let mut storage = HashMap::new();
-        while let Some(address) = gray_stack.pop() {
-            let handle = self.storage.get(&address).unwrap();
-            storage.insert(address, handle.clone());
-            handle.enumerate_reference(&mut |address| {
+
+        let heap_table = self.heap_table.read().unwrap();
+        let mut heap = heap_table.get(&id).unwrap().lock().unwrap();
+        while let Some(address) = gray_list.pop() {
+            let shared = self.inspect_internal(address, &*heap_table, &mut *heap);
+            storage.insert(address, shared.clone());
+            shared.enumerate_reference(&mut |address| {
                 if !storage.contains_key(&address) {
-                    gray_stack.push(address);
+                    gray_list.push(address);
                 }
             });
         }
-        replace(&mut self.storage, storage)
+        let collected = replace(&mut heap.storage, storage);
+        self.collect_table.write().unwrap().extend(collected);
+        self.witness_set.lock().unwrap().remove(&id);
     }
 
-    pub fn inspect(&self, address: Address) -> &dyn GeneralInterface {
-        &**self.storage.get(&address).unwrap()
+    pub fn join(&self, id: TaskId) {
+        self.copy_collect(id, &[]);
+        self.heap_table.write().unwrap().remove(&id);
     }
 
-    pub fn inspect_mut(&mut self, address: Address) -> &mut dyn GeneralInterface {
-        Arc::get_mut(self.storage.get_mut(&address).unwrap()).unwrap()
-    }
-
-    pub fn count(&self) -> usize {
-        self.storage.len()
-    }
-}
-
-impl Default for Collector {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[derive(Debug)]
-    struct GeneralNode(u64, Vec<Address>);
-    impl EnumerateReference for GeneralNode {
-        fn enumerate_reference(&self, callback: &mut dyn FnMut(Address)) {
-            for address in &self.1 {
-                callback(*address);
-            }
+    pub fn epoch_change<F: FnOnce() -> HashSet<TaskId>>(&self, witness_set: F) {
+        let mut previous_witness_set = self.witness_set.lock().unwrap();
+        if !previous_witness_set.is_empty() {
+            return;
         }
-    }
-
-    #[test]
-    fn collect_all() {
-        let mut c = Collector::new();
-        for i in 0..10 {
-            c.allocate(Arc::new(GeneralNode(i, Vec::new())));
-        }
-        assert_eq!(c.count(), 10);
-        c.copy_collect(&[]);
-        assert_eq!(c.count(), 0);
-    }
-
-    #[test]
-    fn collect_orphan() {
-        let mut c = Collector::new();
-        let mut root = GeneralNode(0, Vec::new());
-        let mut side_list = Vec::new();
-        for i in 0..10 {
-            let handle = Arc::new(GeneralNode(i, Vec::new()));
-            side_list.push(Arc::downgrade(&handle));
-            let address = c.allocate(handle);
-            if i < 7 {
-                root.1.push(address);
-            }
-        }
-        let root_list = [c.allocate(Arc::new(root))];
-        c.copy_collect(&root_list);
-        assert_eq!(c.count(), 7 + 1);
-        for weak in side_list {
-            if let Some(handle) = weak.upgrade() {
-                assert!(handle.0 < 7);
-            }
-        }
-    }
-
-    #[test]
-    fn collect_cyclic_orphan() {
-        let mut c = Collector::new();
-        let address1 = c.allocate(Arc::new(GeneralNode(0, Vec::new())));
-        let address2 = c.allocate(Arc::new(GeneralNode(0, Vec::new())));
-        c.inspect_mut(address1)
-            .as_mut()
-            .downcast_mut::<GeneralNode>()
-            .unwrap()
-            .1
-            .push(address2);
-        c.inspect_mut(address2)
-            .as_mut()
-            .downcast_mut::<GeneralNode>()
-            .unwrap()
-            .1
-            .push(address1);
-        c.copy_collect(&[]);
-        assert_eq!(c.count(), 0);
+        let mut limbo_table = self.limbo_table.write().unwrap();
+        let mut collect_table = self.collect_table.write().unwrap();
+        let previous_collect_table = take(&mut *collect_table);
+        let previous_limbo_table = replace(&mut *limbo_table, previous_collect_table);
+        drop(previous_limbo_table);
+        let _ = replace(&mut *previous_witness_set, witness_set());
     }
 }

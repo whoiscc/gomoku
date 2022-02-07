@@ -1,6 +1,5 @@
 use crate::collector::{Address, EnumerateReference};
 use crate::interpreter::{ModuleId, OperateContext};
-use std::sync::Arc;
 
 pub trait LeafObject {}
 impl<T: LeafObject> EnumerateReference for T {
@@ -33,15 +32,6 @@ pub struct Dispatch {
 }
 impl LeafObject for Dispatch {}
 
-/// The literal of closure, present in byte code
-#[derive(Debug, Clone)]
-pub struct ClosureMeta {
-    pub dispatch: Dispatch,
-    pub n_capture: u8,
-}
-impl LeafObject for ClosureMeta {}
-
-/// The runtime closure object, before first invoking
 #[derive(Debug, Clone)]
 pub struct Closure {
     pub dispatch: Dispatch,
@@ -71,7 +61,7 @@ impl Ready {
     // result: 1 Ready wrapping argument
     pub fn operate_new(context: &mut dyn OperateContext) {
         let ready = Self(context.get_argument(0));
-        let ready = context.allocate(Arc::new(ready));
+        let ready = context.allocate(ready.into());
         context.push_result(ready);
     }
 }

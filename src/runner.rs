@@ -1,22 +1,34 @@
-use crate::collector::Address;
+use crate::collector::Owned;
+use crate::collector::{Address, Collector};
 use crate::interpreter::{ByteCode, Interpreter, Module, ModuleId};
 use crate::objects::{Closure, Dispatch, False, True};
+use crate::portal::{Portal, Task};
+use crate::GeneralInterface;
+use crate::TaskId;
+use std::ops::Deref;
+use std::sync::Arc;
 use std::thread::current;
 
 pub struct Runner {
     interp: Interpreter,
+    portal: Arc<Portal>,
+    collector: Arc<Collector>,
+}
+
+pub type Inspect = Box<dyn Deref<Target = dyn GeneralInterface>>;
+pub trait CollectorInterface {
+    fn inspect(&self, address: Address) -> Inspect;
+    fn replace(&mut self, address: Address, owned: Owned) -> Owned;
+    fn allocate(&mut self, handle: Owned) -> Address;
 }
 
 impl Runner {
-    pub fn new() -> Self {
+    pub fn new(portal: Arc<Portal>, collector: Arc<Collector>) -> Self {
         Self {
             interp: Interpreter::new(),
-            // TODO
+            portal,
+            collector,
         }
-    }
-
-    pub fn garbage_collect(&mut self) {
-        todo!()
     }
 
     fn module_id() -> ModuleId {
@@ -27,9 +39,7 @@ impl Runner {
         String::from("(start)")
     }
 
-    pub fn prepare_task(&mut self) -> Option<Address> {
-        let task_address = (current().id(), 0); // TODO
-
+    pub fn prepare_task(&mut self) {
         self.interp.load_module(Module {
             id: Self::module_id(),
             symbol_table: [(Self::start_symbol(), 0)].into_iter().collect(),
@@ -39,36 +49,28 @@ impl Runner {
                 ByteCode::Call(1),
                 ByteCode::PackFloating(1),
                 // ready flag, capture pack, extracted result, updated task
-                ByteCode::Operate(3, Box::new(Closure::operate_poll)),
+                // ByteCode::Operate(3, Box::new(Closure::operate_poll)),
                 ByteCode::Copy(4),
                 ByteCode::Copy(4),
                 ByteCode::Return(3), // (order in result list) ready flag, updated task, extracted result
             ],
         });
-        self.interp.push_variable(task_address);
-        self.interp.push_call(
-            Dispatch {
-                module_id: Self::module_id(),
-                symbol: Self::start_symbol(),
-            },
-            0,
-        );
-        Some(task_address)
     }
+}
 
-    pub fn poll_task(&mut self) -> Option<Address> {
-        while self.interp.has_step() {
-            self.interp.step();
-        }
-        let result_list = self.interp.reset();
-        let ready = self.interp.collector.inspect(result_list[0]).as_ref();
-        if ready.is::<False>() {
-            todo!()
-        }
-        if ready.is::<True>() {
-            return Some(result_list[2]);
-        }
-        unreachable!()
+struct TaskCollector<'a> {
+    collector: &'a Collector,
+    task_id: TaskId,
+}
+impl<'a> CollectorInterface for TaskCollector<'a> {
+    fn allocate(&mut self, owned: Owned) -> Address {
+        self.collector.allocate(self.task_id, owned)
+    }
+    fn inspect(&self, address: Address) -> Inspect {
+        Box::new(self.collector.inspect(self.task_id, address))
+    }
+    fn replace(&mut self, address: Address, owned: Owned) -> Owned {
+        self.collector.replace_owned(address, owned)
     }
 }
 
