@@ -201,11 +201,12 @@ impl Interpreter {
     }
 }
 
-/*
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::objects::LeafObject;
+    use crate::GeneralInterface;
+    use std::sync::Arc;
 
     fn main_module() -> ModuleId {
         String::from("main")
@@ -220,6 +221,26 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct Collector {
+        allocate_number: u32,
+        storage: HashMap<Address, Arc<dyn GeneralInterface>>,
+    }
+    impl CollectorInterface for Collector {
+        fn allocate(&mut self, owned: Owned) -> Address {
+            self.allocate_number += 1;
+            let address = (0, self.allocate_number);
+            self.storage.insert(address, owned.into());
+            address
+        }
+        fn inspect(&self, address: Address) -> Inspect {
+            Box::new(self.storage.get(&address).unwrap().clone())
+        }
+        fn replace(&mut self, address: Address, owned: Owned) -> Owned {
+            self.storage.insert(address, owned.into()).unwrap().into()
+        }
+    }
+
     #[test]
     fn simple_step() {
         let mut interp = Interpreter::new();
@@ -230,7 +251,8 @@ mod tests {
         });
         interp.push_call(start_dispatch(), 0);
         assert!(interp.has_step());
-        interp.step();
+        let mut collector = Collector::default();
+        interp.step(&mut collector);
         assert!(!interp.has_step());
     }
 
@@ -238,7 +260,7 @@ mod tests {
         ByteCode::Operate(
             0,
             Box::new(move |context| {
-                let literal = context.allocate(Arc::new(literal.clone()));
+                let literal = context.allocate(literal.clone().into());
                 context.push_result(literal);
             }),
         )
@@ -248,13 +270,8 @@ mod tests {
         ByteCode::Operate(
             1,
             Box::new(move |context| {
-                assert_eq!(
-                    context
-                        .inspect(context.get_argument(0))
-                        .as_ref()
-                        .downcast_ref(),
-                    Some(&expect)
-                );
+                let top = context.inspect(context.get_argument(0));
+                assert_eq!((*top).as_ref().downcast_ref(), Some(&expect));
             }),
         )
     }
@@ -264,31 +281,31 @@ mod tests {
     impl LeafObject for I32 {}
     impl I32 {
         fn operate_add_two(context: &mut dyn OperateContext) {
-            let int_a = context.get_argument(0);
-            let int_a: I32 = *context.inspect(int_a).as_ref().downcast_ref().unwrap();
-            let int_b = context.get_argument(1);
-            let int_b: I32 = *context.inspect(int_b).as_ref().downcast_ref().unwrap();
-            let int_c = context.allocate(Arc::new(I32(int_a.0 + int_b.0)));
+            let int_a = context.inspect(context.get_argument(0));
+            let int_a: I32 = *(*int_a).as_ref().downcast_ref().unwrap();
+            let int_b = context.inspect(context.get_argument(1));
+            let int_b: I32 = *(*int_b).as_ref().downcast_ref().unwrap();
+            let int_c = context.allocate(I32(int_a.0 + int_b.0).into());
             context.push_result(int_c);
         }
         fn operate_add_in_place(context: &mut dyn OperateContext) {
-            let int_a = context.get_argument(0);
-            let int_a: I32 = *context.inspect(int_a).as_ref().downcast_ref().unwrap();
-            let int_b = context.get_argument(1);
-            let int_b: I32 = *context.inspect(int_b).as_ref().downcast_ref().unwrap();
+            let int_a = context.inspect(context.get_argument(0));
+            let int_a: I32 = *(*int_a).as_ref().downcast_ref().unwrap();
+            let int_b = context.inspect(context.get_argument(1));
+            let int_b: I32 = *(*int_b).as_ref().downcast_ref().unwrap();
             let int_c = I32(int_a.0 + int_b.0);
             let int_b = context.get_argument(1);
-            *context.inspect_mut(int_b).as_mut().downcast_mut().unwrap() = int_c;
+            context.replace(int_b, int_c.into());
         }
         fn operate_eq_two(context: &mut dyn OperateContext) {
-            let int_a = context.get_argument(0);
-            let int_a: I32 = *context.inspect(int_a).as_ref().downcast_ref().unwrap();
-            let int_b = context.get_argument(1);
-            let int_b: I32 = *context.inspect(int_b).as_ref().downcast_ref().unwrap();
-            let result: Handle = if int_a == int_b {
-                Arc::new(True)
+            let int_a = context.inspect(context.get_argument(0));
+            let int_a: I32 = *(*int_a).as_ref().downcast_ref().unwrap();
+            let int_b = context.inspect(context.get_argument(1));
+            let int_b: I32 = *(*int_b).as_ref().downcast_ref().unwrap();
+            let result: Owned = if int_a == int_b {
+                True.into()
             } else {
-                Arc::new(False)
+                False.into()
             };
             let result = context.allocate(result);
             context.push_result(result);
@@ -310,8 +327,9 @@ mod tests {
             ],
         });
         interp.push_call(start_dispatch(), 0);
+        let mut collector = Collector::default();
         while interp.has_step() {
-            interp.step();
+            interp.step(&mut collector);
         }
     }
 
@@ -332,8 +350,9 @@ mod tests {
             ],
         });
         interp.push_call(start_dispatch(), 0);
+        let mut collector = Collector::default();
         while interp.has_step() {
-            interp.step();
+            interp.step(&mut collector);
         }
     }
 
@@ -384,8 +403,9 @@ mod tests {
             ],
         });
         interp.push_call(start_dispatch(), 0);
+        let mut collector = Collector::default();
         while interp.has_step() {
-            interp.step();
+            interp.step(&mut collector);
         }
     }
 
@@ -456,9 +476,9 @@ mod tests {
             ],
         });
         interp.push_call(start_dispatch(), 0);
+        let mut collector = Collector::default();
         while interp.has_step() {
-            interp.step();
+            interp.step(&mut collector);
         }
     }
 }
-*/

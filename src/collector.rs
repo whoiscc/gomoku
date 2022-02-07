@@ -50,6 +50,18 @@ impl<T: GeneralInterface> From<T> for Owned {
         Self(Arc::new(value))
     }
 }
+#[cfg(test)]
+impl Into<Arc<dyn GeneralInterface>> for Owned {
+    fn into(self) -> Arc<dyn GeneralInterface> {
+        self.0
+    }
+}
+#[cfg(test)]
+impl From<Arc<dyn GeneralInterface>> for Owned {
+    fn from(value: Arc<dyn GeneralInterface>) -> Self {
+        Self(value)
+    }
+}
 impl Deref for Owned {
     type Target = dyn GeneralInterface;
     fn deref(&self) -> &Self::Target {
