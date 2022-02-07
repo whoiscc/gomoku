@@ -3,7 +3,7 @@ use crate::TaskId;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread::ThreadId;
+use std::thread::{park, Thread, ThreadId};
 
 #[derive(Default)]
 pub struct Portal {
@@ -17,11 +17,18 @@ pub type Task = (TaskId, Address);
 struct Peer {
     poll_list: Mutex<Vec<Task>>,
     pending_set: Mutex<HashSet<Task>>,
+    thread: Thread,
 }
 
 impl Portal {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn activative_peer(&self) {
+        for peer in self.peer_table.values() {
+            peer.thread.unpark();
+        }
     }
 
     pub fn spawn(&self, thread_id: ThreadId, closure: Address) -> Task {
@@ -34,6 +41,7 @@ impl Portal {
             .lock()
             .unwrap()
             .push(task);
+        self.activative_peer();
         task
     }
 
@@ -53,9 +61,33 @@ impl Portal {
             let peer = waker_self.peer_table.get(&id).unwrap();
             if peer.pending_set.lock().unwrap().remove(&task) {
                 peer.poll_list.lock().unwrap().push(task);
+                waker_self.activative_peer();
             }
         })
     }
 
-    // pub fn fetch()
+    pub fn fetch(&self, id: ThreadId) -> Task {
+        loop {
+            if let Some(task) = self
+                .peer_table
+                .get(&id)
+                .unwrap()
+                .poll_list
+                .lock()
+                .unwrap()
+                .pop()
+            {
+                return task;
+            }
+            for (peer_id, peer) in self.peer_table.iter() {
+                if *peer_id == id {
+                    continue;
+                }
+                if let Some(task) = peer.poll_list.lock().unwrap().pop() {
+                    return task;
+                }
+            }
+            park();
+        }
+    }
 }

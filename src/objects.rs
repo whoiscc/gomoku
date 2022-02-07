@@ -1,6 +1,14 @@
 use crate::collector::{Address, EnumerateReference};
 use crate::interpreter::{ModuleId, OperateContext};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Intermediate;
+impl EnumerateReference for Intermediate {
+    fn enumerate_reference(&self, _callback: &mut dyn FnMut(Address)) {
+        panic!("intermediate placeholder escaped");
+    }
+}
+
 pub trait LeafObject {}
 impl<T: LeafObject> EnumerateReference for T {
     fn enumerate_reference(&self, _c: &mut dyn FnMut(Address)) {}

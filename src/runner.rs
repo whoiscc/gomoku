@@ -1,7 +1,7 @@
 use crate::collector::Owned;
 use crate::collector::{Address, Collector};
 use crate::interpreter::{ByteCode, Interpreter, Module, ModuleId};
-use crate::objects::{Closure, Dispatch, False, True};
+use crate::objects::{Closure, Dispatch, Pending, Ready};
 use crate::portal::{Portal, Task};
 use crate::GeneralInterface;
 use crate::TaskId;
@@ -24,25 +24,11 @@ pub trait CollectorInterface {
 
 impl Runner {
     pub fn new(portal: Arc<Portal>, collector: Arc<Collector>) -> Self {
-        Self {
-            interp: Interpreter::new(),
-            portal,
-            collector,
-        }
-    }
-
-    fn module_id() -> ModuleId {
-        String::from("//async")
-    }
-
-    fn start_symbol() -> String {
-        String::from("(start)")
-    }
-
-    pub fn prepare_task(&mut self) {
-        self.interp.load_module(Module {
+        let mut interp = Interpreter::new();
+        interp.load_module(Module {
             id: Self::module_id(),
             symbol_table: [(Self::start_symbol(), 0)].into_iter().collect(),
+            // TODO
             program: vec![
                 ByteCode::AssertFloating(1),
                 ByteCode::Operate(1, Box::new(Closure::operate_apply)),
@@ -55,6 +41,49 @@ impl Runner {
                 ByteCode::Return(3), // (order in result list) ready flag, updated task, extracted result
             ],
         });
+        Self {
+            interp,
+            portal,
+            collector,
+        }
+    }
+
+    fn module_id() -> ModuleId {
+        String::from("//task.toplevel")
+    }
+
+    fn start_symbol() -> String {
+        String::from("(start)")
+    }
+
+    pub fn poll_one(&mut self) {
+        let task = self.portal.fetch(current().id());
+        self.collector.spawn(task.0);
+        self.interp.push_variable(task.1);
+        self.interp.push_call(
+            Dispatch {
+                module_id: Self::module_id(),
+                symbol: Self::start_symbol(),
+            },
+            0,
+        );
+        while self.interp.has_step() {
+            self.interp.step(&mut TaskCollector {
+                collector: &*self.collector,
+                task_id: task.0,
+            });
+        }
+        let result_list = self.interp.reset();
+        assert_eq!(result_list.len(), 1);
+        let result = self.collector.inspect(task.0, result_list[0]);
+        if result.as_ref().is::<Pending>() {
+            self.portal.suspend(current().id(), task);
+        } else {
+            let result: &Ready = result.as_ref().downcast_ref().unwrap();
+            let result = result.0;
+            // TODO
+            self.collector.join(task.0);
+        }
     }
 }
 
