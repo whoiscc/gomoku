@@ -1,6 +1,6 @@
-use crate::collector::{Address, Owned};
+use crate::collector::{Address, Owned, Shared};
 use crate::objects::{Dispatch, False, List, True};
-use crate::runner::{CollectorInterface, Inspect};
+use crate::runner::CollectorInterface;
 use std::collections::HashMap;
 use std::mem::take;
 
@@ -89,7 +89,7 @@ impl<'i> CollectorInterface for OperateView<'i> {
     fn allocate(&mut self, owned: Owned) -> Address {
         self.collector.allocate(owned)
     }
-    fn inspect(&self, address: Address) -> Inspect {
+    fn inspect(&self, address: Address) -> Shared {
         self.collector.inspect(address)
     }
     fn replace(&mut self, address: Address, owned: Owned) -> Owned {
@@ -136,20 +136,20 @@ impl Interpreter {
                 let offset = *offset;
                 let top = *self.variable_stack.last().unwrap();
                 let top = collector.inspect(top);
-                if (*top).as_ref().is::<True>() {
+                if top.as_ref().is::<True>() {
                     let pointer = &mut self.call_stack.last_mut().unwrap().pointer;
                     if offset > 0 {
                         pointer.1 += offset as usize;
                     } else {
                         pointer.1 -= (-offset) as usize;
                     }
-                } else if !(*top).as_ref().is::<False>() {
-                    panic!("jump on non-boolean variable {:?}", &**top);
+                } else if !top.as_ref().is::<False>() {
+                    panic!("jump on non-boolean variable {:?}", &*top);
                 }
             }
             ByteCode::Call(n_argument) => {
                 let dispatch = collector.inspect(*self.variable_stack.last().unwrap());
-                let dispatch: &Dispatch = (*dispatch).as_ref().downcast_ref().unwrap();
+                let dispatch: &Dispatch = dispatch.as_ref().downcast_ref().unwrap();
                 let dispatch = dispatch.clone();
                 self.variable_stack.remove(self.variable_stack.len() - 1); // is it useful to save it?
                 let stack_size = self.variable_stack.len() - *n_argument as usize;
@@ -185,7 +185,7 @@ impl Interpreter {
             }
             ByteCode::Unpack => {
                 let pack = collector.inspect(*self.variable_stack.last().unwrap());
-                let pack: &List = (*pack).as_ref().downcast_ref().unwrap();
+                let pack: &List = pack.as_ref().downcast_ref().unwrap();
                 self.variable_stack.pop();
                 self.variable_stack.extend(&pack.0);
             }
@@ -193,7 +193,7 @@ impl Interpreter {
     }
 
     #[cfg(test)]
-    pub fn stack_view(&mut self, collector: &dyn CollectorInterface) -> Vec<Inspect> {
+    pub fn stack_view(&mut self, collector: &dyn CollectorInterface) -> Vec<Shared> {
         self.variable_stack
             .iter()
             .map(|address| collector.inspect(*address))
@@ -233,8 +233,8 @@ mod tests {
             self.storage.insert(address, owned.into());
             address
         }
-        fn inspect(&self, address: Address) -> Inspect {
-            Box::new(self.storage.get(&address).unwrap().clone())
+        fn inspect(&self, address: Address) -> Shared {
+            self.storage.get(&address).unwrap().clone().into()
         }
         fn replace(&mut self, address: Address, owned: Owned) -> Owned {
             self.storage.insert(address, owned.into()).unwrap().into()
@@ -271,7 +271,7 @@ mod tests {
             1,
             Box::new(move |context| {
                 let top = context.inspect(context.get_argument(0));
-                assert_eq!((*top).as_ref().downcast_ref(), Some(&expect));
+                assert_eq!(top.as_ref().downcast_ref(), Some(&expect));
             }),
         )
     }
@@ -282,26 +282,26 @@ mod tests {
     impl I32 {
         fn operate_add_two(context: &mut dyn OperateContext) {
             let int_a = context.inspect(context.get_argument(0));
-            let int_a: I32 = *(*int_a).as_ref().downcast_ref().unwrap();
+            let int_a: I32 = *int_a.as_ref().downcast_ref().unwrap();
             let int_b = context.inspect(context.get_argument(1));
-            let int_b: I32 = *(*int_b).as_ref().downcast_ref().unwrap();
+            let int_b: I32 = *int_b.as_ref().downcast_ref().unwrap();
             let int_c = context.allocate(I32(int_a.0 + int_b.0).into());
             context.push_result(int_c);
         }
         fn operate_add_in_place(context: &mut dyn OperateContext) {
             let int_a = context.inspect(context.get_argument(0));
-            let int_a: I32 = *(*int_a).as_ref().downcast_ref().unwrap();
+            let int_a: I32 = *int_a.as_ref().downcast_ref().unwrap();
             let int_b = context.inspect(context.get_argument(1));
-            let int_b: I32 = *(*int_b).as_ref().downcast_ref().unwrap();
+            let int_b: I32 = *int_b.as_ref().downcast_ref().unwrap();
             let int_c = I32(int_a.0 + int_b.0);
             let int_b = context.get_argument(1);
             context.replace(int_b, int_c.into());
         }
         fn operate_eq_two(context: &mut dyn OperateContext) {
             let int_a = context.inspect(context.get_argument(0));
-            let int_a: I32 = *(*int_a).as_ref().downcast_ref().unwrap();
+            let int_a: I32 = *int_a.as_ref().downcast_ref().unwrap();
             let int_b = context.inspect(context.get_argument(1));
-            let int_b: I32 = *(*int_b).as_ref().downcast_ref().unwrap();
+            let int_b: I32 = *int_b.as_ref().downcast_ref().unwrap();
             let result: Owned = if int_a == int_b {
                 True.into()
             } else {

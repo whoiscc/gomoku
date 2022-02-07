@@ -1,11 +1,8 @@
-use crate::collector::Owned;
-use crate::collector::{Address, Collector};
+use crate::collector::{Address, Collector, Owned, Shared};
 use crate::interpreter::{ByteCode, Interpreter, Module, ModuleId};
 use crate::objects::{Closure, Dispatch, Pending, Ready};
 use crate::portal::{Portal, Task};
-use crate::GeneralInterface;
 use crate::TaskId;
-use std::ops::Deref;
 use std::sync::Arc;
 use std::thread::current;
 
@@ -15,9 +12,8 @@ pub struct Runner {
     collector: Arc<Collector>,
 }
 
-pub type Inspect = Box<dyn Deref<Target = dyn GeneralInterface>>;
 pub trait CollectorInterface {
-    fn inspect(&self, address: Address) -> Inspect;
+    fn inspect(&self, address: Address) -> Shared;
     fn replace(&mut self, address: Address, owned: Owned) -> Owned;
     fn allocate(&mut self, handle: Owned) -> Address;
 }
@@ -95,8 +91,8 @@ impl<'a> CollectorInterface for TaskCollector<'a> {
     fn allocate(&mut self, owned: Owned) -> Address {
         self.collector.allocate(self.task_id, owned)
     }
-    fn inspect(&self, address: Address) -> Inspect {
-        Box::new(self.collector.inspect(self.task_id, address))
+    fn inspect(&self, address: Address) -> Shared {
+        self.collector.inspect(self.task_id, address)
     }
     fn replace(&mut self, address: Address, owned: Owned) -> Owned {
         self.collector.replace_owned(address, owned)

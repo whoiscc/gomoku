@@ -10,19 +10,31 @@ pub trait EnumerateReference {
     fn enumerate_reference(&self, callback: &mut dyn FnMut(Address));
 }
 
-type Shared = Arc<dyn GeneralInterface>;
+pub struct Shared(Arc<dyn GeneralInterface>);
+impl Deref for Shared {
+    type Target = dyn GeneralInterface;
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
+#[cfg(test)]
+impl From<Arc<dyn GeneralInterface>> for Shared {
+    fn from(value: Arc<dyn GeneralInterface>) -> Self {
+        Self(value)
+    }
+}
 
 #[derive(Default)]
 pub struct Collector {
     heap_table: RwLock<HashMap<TaskId, Mutex<Heap>>>,
-    limbo_table: RwLock<HashMap<Address, Shared>>,
+    limbo_table: RwLock<HashMap<Address, Arc<dyn GeneralInterface>>>,
     witness_set: Mutex<HashSet<TaskId>>,
-    collect_table: RwLock<HashMap<Address, Shared>>,
+    transfer_table: RwLock<HashMap<Address, Arc<dyn GeneralInterface>>>,
 }
 
 #[derive(Default)]
 struct Heap {
-    storage: HashMap<Address, Shared>,
+    storage: HashMap<Address, Arc<dyn GeneralInterface>>,
     allocate_number: u32,
 }
 
@@ -39,7 +51,7 @@ impl Collector {
     }
 }
 
-pub struct Owned(Shared);
+pub struct Owned(Arc<dyn GeneralInterface>);
 impl From<Box<dyn GeneralInterface>> for Owned {
     fn from(value: Box<dyn GeneralInterface>) -> Self {
         Self(value.into())
@@ -84,14 +96,10 @@ impl Collector {
         address
     }
 
-    pub fn inspect(
-        &self,
-        id: TaskId,
-        address: Address,
-    ) -> impl Deref<Target = dyn GeneralInterface> {
+    pub fn inspect(&self, id: TaskId, address: Address) -> Shared {
         let heap_table = self.heap_table.read().unwrap();
         let mut heap = heap_table.get(&id).unwrap().lock().unwrap();
-        self.inspect_internal(address, &*heap_table, &mut *heap)
+        Shared(self.inspect_internal(address, &*heap_table, &mut *heap))
     }
 
     fn inspect_internal(
@@ -99,19 +107,19 @@ impl Collector {
         address: Address,
         heap_table: &HashMap<TaskId, Mutex<Heap>>,
         heap: &mut Heap,
-    ) -> Shared {
+    ) -> Arc<dyn GeneralInterface> {
         if let Some(shared) = heap.storage.get(&address) {
             shared.clone()
         } else {
             let shared = (|| {
                 let limbo_table = self.limbo_table.read().unwrap();
-                let collect_table = self.collect_table.read().unwrap();
+                let transfer_table = self.transfer_table.read().unwrap();
                 if let Some(remote_heap) = heap_table.get(&address.0) {
                     if let Some(shared) = remote_heap.lock().unwrap().storage.get(&address) {
                         return shared.clone();
                     }
                 }
-                if let Some(shared) = collect_table.get(&address) {
+                if let Some(shared) = transfer_table.get(&address) {
                     return shared.clone();
                 }
                 limbo_table.get(&address).unwrap().clone()
@@ -145,7 +153,7 @@ impl Collector {
             });
         }
         let collected = replace(&mut heap.storage, storage);
-        self.collect_table.write().unwrap().extend(collected);
+        self.transfer_table.write().unwrap().extend(collected);
         self.witness_set.lock().unwrap().remove(&id);
     }
 
@@ -160,10 +168,9 @@ impl Collector {
             return;
         }
         let mut limbo_table = self.limbo_table.write().unwrap();
-        let mut collect_table = self.collect_table.write().unwrap();
-        let previous_collect_table = take(&mut *collect_table);
-        let previous_limbo_table = replace(&mut *limbo_table, previous_collect_table);
-        drop(previous_limbo_table);
+        let mut transfer_table = self.transfer_table.write().unwrap();
+        let previous_transfer_table = take(&mut *transfer_table);
+        let _ = replace(&mut *limbo_table, previous_transfer_table);
         let _ = replace(&mut *previous_witness_set, witness_set());
     }
 }

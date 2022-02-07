@@ -6,8 +6,7 @@ impl Closure {
     // result: 1 Dispatch + 1 capture pack
     pub fn operate_apply(context: &mut dyn OperateContext) {
         let closure = context.inspect(context.get_argument(0));
-        println!("{:?}", &**closure);
-        let closure: &Closure = (*closure).as_ref().downcast_ref().unwrap();
+        let closure: &Closure = closure.as_ref().downcast_ref().unwrap();
         let dispatch = closure.dispatch.clone();
         let dispatch = context.allocate(dispatch.into());
         context.push_result(dispatch);
@@ -22,7 +21,7 @@ impl Closure {
         let mut closure_owned = context.replace(context.get_argument(0), Intermediate.into());
         let closure: &mut Closure = closure_owned.as_mut().downcast_mut().unwrap();
         let pack = context.inspect(context.get_argument(1));
-        let pack: &List = (*pack).as_ref().downcast_ref().unwrap();
+        let pack: &List = pack.as_ref().downcast_ref().unwrap();
         closure.capture_list = pack.0.clone();
         context.replace(context.get_argument(0), closure_owned);
     }
@@ -31,10 +30,10 @@ impl Closure {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collector::{Address, Owned};
+    use crate::collector::{Address, Owned, Shared};
     use crate::interpreter::{ByteCode, Interpreter, Module, ModuleId, OperateContext};
     use crate::objects::{Dispatch, LeafObject, Ready};
-    use crate::runner::{CollectorInterface, Inspect};
+    use crate::runner::CollectorInterface;
     use crate::GeneralInterface;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
@@ -64,8 +63,8 @@ mod tests {
             self.storage.insert(address, owned.into());
             address
         }
-        fn inspect(&self, address: Address) -> Inspect {
-            Box::new(self.storage.get(&address).unwrap().clone())
+        fn inspect(&self, address: Address) -> Shared {
+            self.storage.get(&address).unwrap().clone().into()
         }
         fn replace(&mut self, address: Address, owned: Owned) -> Owned {
             self.storage.insert(address, owned.into()).unwrap().into()
